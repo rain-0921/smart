@@ -2,6 +2,27 @@ const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+// ─── HELPER: Generate institution_id ─────────────────────
+const prefixMap = {
+  student:    'S',
+  instructor: 'I',
+  advisor:    'A',
+  admin:      'AD'
+};
+
+async function generateInstitutionId(role) {
+  const prefix = prefixMap[role];
+  const [rows] = await db.execute(
+    `SELECT institution_id FROM user
+     WHERE institution_id LIKE ?
+     ORDER BY institution_id DESC LIMIT 1`,
+    [`${prefix}%`]
+  );
+  if (rows.length === 0) return `${prefix}001`;
+  const lastNum = parseInt(rows[0].institution_id.replace(prefix, ''), 10);
+  return `${prefix}${String(lastNum + 1).padStart(3, '0')}`;
+}
+
 // REGISTER
 exports.register = async (req, res) => {
   const { username, email, password, role, department, phone_number } = req.body;
@@ -22,11 +43,14 @@ exports.register = async (req, res) => {
     // Hash password
     const password_hash = await bcrypt.hash(password, 10);
 
+    // Generate institution_id
+    const institution_id = await generateInstitutionId(role);
+
     // Insert user
     const [result] = await db.execute(
-      `INSERT INTO user (username, email, password_hash, role, department, phone_number)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [username, email, password_hash, role, department || null, phone_number || null]
+      `INSERT INTO user (institution_id, username, email, password_hash, role, department, phone_number)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [institution_id, username, email, password_hash, role, department || null, phone_number || null]
     );
 
     const newUserId = result.insertId;
@@ -42,7 +66,7 @@ exports.register = async (req, res) => {
       );
     }
 
-    res.status(201).json({ message: 'Account created successfully' });
+    res.status(201).json({ message: 'Account created successfully', institution_id });
 
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -51,19 +75,19 @@ exports.register = async (req, res) => {
 
 // LOGIN
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
+  const { institution_id, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+  if (!institution_id || !password) {
+    return res.status(400).json({ message: 'ID and password are required' });
   }
 
   try {
     const [rows] = await db.execute(
-      'SELECT * FROM user WHERE email = ?', [email]
+      'SELECT * FROM user WHERE institution_id = ?', [institution_id]
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({ message: 'Invalid ID or password' });
     }
 
     const user = rows[0];
@@ -74,7 +98,7 @@ exports.login = async (req, res) => {
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({ message: 'Invalid ID or password' });
     }
 
     const token = jwt.sign(
@@ -94,6 +118,7 @@ exports.login = async (req, res) => {
       token,
       user: {
         user_id: user.user_id,
+        institution_id: user.institution_id,
         username: user.username,
         email: user.email,
         role: user.role,
