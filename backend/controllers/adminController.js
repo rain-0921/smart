@@ -1,34 +1,13 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 
-// ─── HELPER: Generate institution_id ─────────────────────
-const prefixMap = {
-  student:    'S',
-  instructor: 'I',
-  advisor:    'A',
-  admin:      'AD'
-};
-
-async function generateInstitutionId(role) {
-  const prefix = prefixMap[role];
-  const [rows] = await db.execute(
-    `SELECT institution_id FROM user
-     WHERE institution_id LIKE ?
-     ORDER BY institution_id DESC LIMIT 1`,
-    [`${prefix}%`]
-  );
-  if (rows.length === 0) return `${prefix}001`;
-  const lastNum = parseInt(rows[0].institution_id.replace(prefix, ''), 10);
-  return `${prefix}${String(lastNum + 1).padStart(3, '0')}`;
-}
-
 // ─── USERS ───────────────────────────────────────────────
 
 // Get all users
 exports.getAllUsers = async (req, res) => {
   try {
     const [users] = await db.execute(
-      `SELECT user_id, institution_id, username, email, role, department, 
+      `SELECT user_id, username, email, role, department, 
               phone_number, status, created_at, photo_url
        FROM user ORDER BY created_at DESC`
     );
@@ -52,11 +31,10 @@ exports.addUser = async (req, res) => {
       return res.status(400).json({ message: 'Email already exists' });
     }
     const password_hash = await bcrypt.hash(password, 10);
-    const institution_id = await generateInstitutionId(role);
     const [result] = await db.execute(
-      `INSERT INTO user (institution_id, username, email, password_hash, role, department, phone_number)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [institution_id, username, email, password_hash, role, department || null, phone_number || null]
+      `INSERT INTO user (username, email, password_hash, role, department, phone_number)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [username, email, password_hash, role, department || null, phone_number || null]
     );
     const newUserId = result.insertId;
     if (role === 'student') {
@@ -64,7 +42,7 @@ exports.addUser = async (req, res) => {
     } else if (role === 'instructor') {
       await db.execute('INSERT INTO instructor_profile (user_id) VALUES (?)', [newUserId]);
     }
-    res.status(201).json({ message: 'User created successfully', institution_id });
+    res.status(201).json({ message: 'User created successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
