@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { loginUser } from '../services/api';
 
 function Login() {
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError]       = useState('');
-  const [loading, setLoading]   = useState(false);
+  const [institutionId, setInstitutionId] = useState('');
+  const [password, setPassword]           = useState('');
+  const [error, setError]                 = useState('');
+  const [loading, setLoading]             = useState(false);
 
   const { login } = useAuth();
   const navigate  = useNavigate();
@@ -18,7 +18,7 @@ function Login() {
     setLoading(true);
 
     try {
-      const res = await loginUser({ email, password });
+      const res = await loginUser({ institution_id: institutionId, password });
       login(res.data.user, res.data.token);
 
       // Redirect based on role
@@ -45,13 +45,13 @@ function Login() {
 
         <form onSubmit={handleSubmit}>
           <div style={styles.field}>
-            <label style={styles.label}>Email</label>
+            <label style={styles.label}>Student ID / Staff ID</label>
             <input
               style={styles.input}
-              type="email"
-              placeholder="Enter your email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              placeholder="e.g. S001, I001, A001, AD001"
+              value={institutionId}
+              onChange={(e) => setInstitutionId(e.target.value)}
               required
             />
           </div>
