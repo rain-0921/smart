@@ -132,11 +132,29 @@ export default function StudentDashboard() {
 
   // ── Timer for quiz ──
   useEffect(() => {
-    if (!activeQuiz || !timeLeft) return;
-    if (timeLeft <= 0) { handleSubmitQuiz(); return; }
+    if (!activeQuiz || timeLeft === null) return;
+    if (timeLeft <= 0) {
+      // Auto-submit with current answers
+      const answers = Object.entries(quizAnswers).map(([question_id, user_answer]) => ({
+        question_id: parseInt(question_id), user_answer
+      }));
+      studentSubmitQuiz(activeQuiz.attempt_id, { answers })
+        .then(res => {
+          setQuizResult(res.data);
+          setActiveQuiz(null);
+          setTimeLeft(null);
+          // use functional update to get latest selectedCourse
+          setSelectedCourse(sc => {
+            if (sc) studentGetGrades(sc.course_id).then(r => setGrades(r.data));
+            return sc;
+          });
+        })
+        .catch(() => showAlert('Time is up! Quiz auto-submitted.', 'error'));
+      return;
+    }
     const timer = setTimeout(() => setTimeLeft(t => t - 1), 1000);
     return () => clearTimeout(timer);
-  }, [timeLeft, activeQuiz]);
+  }, [timeLeft, activeQuiz, quizAnswers]);
 
   // ── Fetch data on tab change ──
   useEffect(() => {
@@ -152,6 +170,10 @@ export default function StudentDashboard() {
 
   // ── Load modules when course selected ──
   const openCourse = async (course) => {
+    if (!course.is_enrolled && course.is_enrolled !== undefined && course.is_enrolled < 1) {
+      showAlert('Please enroll in this course first.', 'error');
+      return;
+    }
     setSelectedCourse(course);
     setActiveQuiz(null);
     setQuizResult(null);
@@ -217,21 +239,31 @@ export default function StudentDashboard() {
       setActiveQuiz(null);
       setTimeLeft(null);
       studentGetGrades(selectedCourse.course_id).then(r => setGrades(r.data));
-    } catch { showAlert('Failed to submit quiz', 'error'); }
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed to submit quiz', 'error'); }
   };
+
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileData, setProfileData] = useState(null);
 
   // ── Profile ──
   const openProfile = async () => {
-    const res = await studentGetProfile();
-    setProfileForm({
-      username: res.data.username || '',
-      phone_number: res.data.phone_number || '',
-      department: res.data.department || '',
-      academic_level: res.data.academic_level || '',
-      programme: res.data.programme || '',
-      learning_preferences: res.data.learning_preferences || ''
-    });
+    setProfileLoading(true);
     setShowProfileModal(true);
+    try {
+      const res = await studentGetProfile();
+      setProfileData(res.data);
+      setProfileForm({
+        username: res.data.username || '',
+        phone_number: res.data.phone_number || '',
+        email: res.data.email || '',
+        department: res.data.department || '',
+      });
+    } catch {
+      showAlert('Failed to load profile', 'error');
+      setShowProfileModal(false);
+    } finally {
+      setProfileLoading(false);
+    }
   };
   const saveProfile = async () => {
     try {
@@ -248,9 +280,25 @@ export default function StudentDashboard() {
     await studentMarkRead(id);
     studentGetNotifications().then(r => setNotifications(r.data));
   };
+  const markAllRead = async () => {
+    const unread = notifications.filter(n => !n.is_read);
+    await Promise.all(unread.map(n => studentMarkRead(n.notification_id)));
+    studentGetNotifications().then(r => setNotifications(r.data));
+  };
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+  const filteredCatalogue = catalogue.filter(c =>
+    !search || c.title?.toLowerCase().includes(search.toLowerCase()) ||
+    c.course_code?.toLowerCase().includes(search.toLowerCase()) ||
+    c.instructor_name?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const filteredModules = modules.filter(m =>
+    !search || m.title?.toLowerCase().includes(search.toLowerCase()) ||
+    m.lessons?.some(l => l.title?.toLowerCase().includes(search.toLowerCase()))
+  );
 
   const enrolledCount = dashboard?.enrollments?.length || 0;
   const avgCompletion = dashboard?.enrollments?.length
@@ -307,21 +355,13 @@ export default function StudentDashboard() {
             <span style={navIcon}>◑</span>
             Profile
           </div>
-        </div>
-
-        <div style={sidebarFooter}>
-          <div style={userCard} onClick={openProfile}>
-            <div style={avatar}>{user.username?.[0]?.toUpperCase() || 'S'}</div>
-            <div style={userInfo}>
-              <div style={userName}>{user.username}</div>
-              <div style={userRole}>Student</div>
-            </div>
-          </div>
-          <div onClick={logout} style={{ ...navItem, marginTop: 10, color: theme.accent5 }}>
+          <div onClick={logout} style={{ ...navItem, color: theme.accent5 }}>
             <span style={navIcon}>🚪</span>
             Logout
           </div>
         </div>
+
+
       </nav>
 
       {/* Main */}
@@ -352,6 +392,12 @@ export default function StudentDashboard() {
           <Alert msg={alert.msg} type={alert.type} />
 
           {/* ── DASHBOARD TAB ── */}
+          {tab === 'dashboard' && !dashboard && (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textMuted }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+              <div style={{ fontSize: 14 }}>Loading your dashboard…</div>
+            </div>
+          )}
           {tab === 'dashboard' && dashboard && (
             <div>
               <div style={{ marginBottom: 24 }}>
@@ -375,13 +421,6 @@ export default function StudentDashboard() {
                   icon="◎"
                   tone="green"
                   trend={{ type: 'up', text: avgCompletion !== null ? 'Weekly progress' : 'No data yet' }}
-                />
-                <StatCard
-                  label="Current GPA"
-                  value={gpa}
-                  icon="★"
-                  tone="purple"
-                  trend={{ type: 'up', text: atRisk ? 'At risk' : 'On track' }}
                 />
                 <StatCard
                   label="Deadlines"
@@ -505,9 +544,9 @@ export default function StudentDashboard() {
           {/* ── COURSES TAB ── */}
           {tab === 'courses' && (
             <div style={courseGridWide}>
-              {catalogue.length === 0
-                ? <div style={emptyState}>No published courses available.</div>
-                : catalogue.map((c, i) => {
+              {filteredCatalogue.length === 0
+                ? <div style={emptyState}>{search ? 'No courses match your search.' : 'No published courses available.'}</div>
+                : filteredCatalogue.map((c, i) => {
                   const tone = courseTones[i % courseTones.length];
                   return (
                     <div key={c.course_id} style={courseCard}>
@@ -533,64 +572,64 @@ export default function StudentDashboard() {
           {tab === 'lessons' && (
             <div>
               {!selectedCourse
-                ? <div style={emptyState}>Select a course from the dashboard or Browse Courses.</div>
+                ? (
+                  <div style={{ ...emptyState, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    <div style={{ fontSize: 40 }}>📚</div>
+                    <div style={{ fontSize: 15, color: theme.textMuted }}>You haven't selected a course yet.</div>
+                    <button style={btnPrimary} onClick={() => setTab('courses')}>Browse Courses</button>
+                  </div>
+                )
                 : (
                   <div style={lessonsGrid}>
                     {/* Left: Modules list */}
                     <div>
-                      <div style={card}>
-                        <div style={cardHeader}>
-                          <div style={cardTitle}>Quizzes</div>
-                        </div>
-                        {quizzes.length === 0
-                          ? <div style={emptyStateSmall}>No quizzes yet.</div>
-                          : quizzes.map(q => (
-                            <div key={q.quiz_id} style={quizItem}>
-                              <div style={{ ...quizIcon, background: 'rgba(108,143,255,0.12)' }}>✎</div>
-                              <div style={quizInfo}>
-                                <div style={quizName}>{q.title}</div>
-                                <div style={quizMeta}>
-                                  Attempts: {q.attempts_taken}/{q.max_attempts}
-                                </div>
-                                {q.due_date &&
-                                  <div style={{ ...quizMeta, color: theme.accent4 }}>
-                                    Due {new Date(q.due_date).toLocaleDateString()}
-                                  </div>
-                                }
-                              </div>
-                              {q.attempts_taken < q.max_attempts
-                                ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
-                                : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>
-                              }
-                            </div>
-                          ))
-                        }
-                      </div>
-
-                      <div style={{ ...card, marginTop: 16 }}>
-                        <div style={cardHeader}>
-                          <div style={cardTitle}>My Grades</div>
-                        </div>
-                        {grades.length === 0
-                          ? <div style={emptyStateSmall}>No grades yet.</div>
-                          : grades.map(g => (
-                            <div key={g.quiz_attempt_id} style={gradeRow}>
-                              <div>
-                                <div style={gradeTitle}>{g.quiz_title}</div>
-                                <div style={{ color: theme.textMuted, fontSize: 11 }}>
-                                  {g.status === 'graded' ? 'Graded' : 'Pending'}
+                      {!activeQuiz && !quizResult && filteredModules.map(mod => (
+                        <div key={mod.module_id} style={{ ...card, marginBottom: 16 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h4 style={{ margin: 0 }}>{mod.title}</h4>
+                            <span style={statusBadge(mod.progress_status || 'not_started')}>
+                              {mod.progress_status || 'not started'}
+                            </span>
+                          </div>
+                          {mod.description && <p style={{ color: theme.textMuted, fontSize: 13 }}>{mod.description}</p>}
+                          <div style={{ marginTop: 12 }}>
+                            {mod.lessons?.map(l => (
+                              <div key={l.lesson_id} style={lessonRow}>
+                                <span style={{ fontSize: 16 }}>
+                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : '📝'}
+                                </span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 600, fontSize: 14 }}>{l.title}</div>
+                                  {l.duration_minutes &&
+                                    <div style={{ fontSize: 12, color: theme.textDim }}>{l.duration_minutes} min</div>
+                                  }
+                                  {l.content_url &&
+                                    <a href={l.content_url} target="_blank" rel="noreferrer" style={link}>
+                                      Open Content ↗
+                                    </a>
+                                  }
+                                  {l.content_text &&
+                                    <div style={lessonText}>
+                                      {l.content_text}
+                                    </div>
+                                  }
                                 </div>
                               </div>
-                              <div style={{ ...gradeBadge, ...gradeBadgeTone(g) }}>
-                                {g.status === 'graded' ? `${parseFloat(g.score).toFixed(0)}%` : '—'}
-                              </div>
-                            </div>
-                          ))
-                        }
-                      </div>
+                            ))}
+                          </div>
+                          {mod.progress_status !== 'completed' &&
+                            <button style={{ ...btnPrimary, marginTop: 12 }} onClick={() => handleComplete(mod.module_id)}>
+                              Mark Module Complete
+                            </button>
+                          }
+                        </div>
+                      ))}
+                      {filteredModules.length === 0 && !activeQuiz && !quizResult && (
+                        <div style={emptyState}>{search ? 'No modules match your search.' : 'No modules yet.'}</div>
+                      )}
                     </div>
 
-                    {/* Right: Active quiz OR modules */}
+                    {/* Right: Active quiz OR quizzes + grades */}
                     <div>
                       {activeQuiz && (
                         <div style={card}>
@@ -599,8 +638,9 @@ export default function StudentDashboard() {
                               {activeQuiz.quiz.title}
                             </h3>
                             {timeLeft !== null &&
-                              <span style={{ fontWeight: 700, color: timeLeft < 60 ? theme.accent5 : theme.accent, fontSize: 18 }}>
+                              <span style={{ fontWeight: 700, color: timeLeft < 300 ? theme.accent5 : theme.accent, fontSize: 18 }}>
                                 ⏱ {formatTime(timeLeft)}
+                                {timeLeft < 300 && <span style={{ fontSize: 12, marginLeft: 6 }}>⚠ Time running out!</span>}
                               </span>
                             }
                           </div>
@@ -676,47 +716,60 @@ export default function StudentDashboard() {
                         </div>
                       )}
 
-                      {!activeQuiz && !quizResult && modules.map(mod => (
-                        <div key={mod.module_id} style={{ ...card, marginBottom: 16 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <h4 style={{ margin: 0 }}>{mod.title}</h4>
-                            <span style={statusBadge(mod.progress_status || 'not_started')}>
-                              {mod.progress_status || 'not started'}
-                            </span>
-                          </div>
-                          {mod.description && <p style={{ color: theme.textMuted, fontSize: 13 }}>{mod.description}</p>}
-                          <div style={{ marginTop: 12 }}>
-                            {mod.lessons?.map(l => (
-                              <div key={l.lesson_id} style={lessonRow}>
-                                <span style={{ fontSize: 16 }}>
-                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : '📝'}
-                                </span>
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontWeight: 600, fontSize: 14 }}>{l.title}</div>
-                                  {l.duration_minutes &&
-                                    <div style={{ fontSize: 12, color: theme.textDim }}>{l.duration_minutes} min</div>
-                                  }
-                                  {l.content_url &&
-                                    <a href={l.content_url} target="_blank" rel="noreferrer" style={link}>
-                                      Open Content ↗
-                                    </a>
-                                  }
-                                  {l.content_text &&
-                                    <div style={lessonText}>
-                                      {l.content_text}
+                      {!activeQuiz && !quizResult && (
+                        <>
+                          <div style={card}>
+                            <div style={cardHeader}>
+                              <div style={cardTitle}>Quizzes</div>
+                            </div>
+                            {quizzes.length === 0
+                              ? <div style={emptyStateSmall}>No quizzes yet.</div>
+                              : quizzes.map(q => (
+                                <div key={q.quiz_id} style={quizItem}>
+                                  <div style={{ ...quizIcon, background: 'rgba(108,143,255,0.12)' }}>✎</div>
+                                  <div style={quizInfo}>
+                                    <div style={quizName}>{q.title}</div>
+                                    <div style={quizMeta}>
+                                      Attempts: {q.attempts_taken}/{q.max_attempts}
                                     </div>
+                                    {q.due_date &&
+                                      <div style={{ ...quizMeta, color: theme.accent4 }}>
+                                        Due {new Date(q.due_date).toLocaleDateString()}
+                                      </div>
+                                    }
+                                  </div>
+                                  {q.attempts_taken < q.max_attempts
+                                    ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
+                                    : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>
                                   }
                                 </div>
-                              </div>
-                            ))}
+                              ))
+                            }
                           </div>
-                          {mod.progress_status !== 'completed' &&
-                            <button style={{ ...btnPrimary, marginTop: 12 }} onClick={() => handleComplete(mod.module_id)}>
-                              Mark Module Complete
-                            </button>
-                          }
-                        </div>
-                      ))}
+
+                          <div style={{ ...card, marginTop: 16 }}>
+                            <div style={cardHeader}>
+                              <div style={cardTitle}>My Grades</div>
+                            </div>
+                            {grades.length === 0
+                              ? <div style={emptyStateSmall}>No grades yet.</div>
+                              : grades.map(g => (
+                                <div key={g.quiz_attempt_id} style={gradeRow}>
+                                  <div>
+                                    <div style={gradeTitle}>{g.quiz_title}</div>
+                                    <div style={{ color: theme.textMuted, fontSize: 11 }}>
+                                      {g.status === 'graded' ? 'Graded' : 'Pending'}
+                                    </div>
+                                  </div>
+                                  <div style={{ ...gradeBadge, ...gradeBadgeTone(g) }}>
+                                    {g.status === 'graded' ? `${parseFloat(g.score).toFixed(0)}%` : '—'}
+                                  </div>
+                                </div>
+                              ))
+                            }
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 )
@@ -731,6 +784,11 @@ export default function StudentDashboard() {
                 <div style={sectionTitle}>Notifications</div>
                 {unreadCount > 0 && (
                   <span style={notifBadge}>{unreadCount} unread</span>
+                )}
+                {unreadCount > 0 && (
+                  <button style={{ ...btnSmall, marginLeft: 'auto' }} onClick={markAllRead}>
+                    Mark All as Read
+                  </button>
                 )}
               </div>
               {notifications.length === 0
@@ -759,27 +817,52 @@ export default function StudentDashboard() {
       {/* ── PROFILE MODAL ── */}
       {showProfileModal && (
         <Modal title="My Profile" onClose={() => setShowProfileModal(false)}>
-          {[
-            { label: 'Username', key: 'username', type: 'text' },
-            { label: 'Phone Number', key: 'phone_number', type: 'text' },
-            { label: 'Department', key: 'department', type: 'text' },
-            { label: 'Academic Level', key: 'academic_level', type: 'text' },
-            { label: 'Programme', key: 'programme', type: 'text' },
-            { label: 'Learning Preferences', key: 'learning_preferences', type: 'text' },
-          ].map(f => (
-            <div key={f.key} style={{ marginBottom: 12 }}>
-              <label style={formLabel}>{f.label}</label>
-              <input
-                style={formInput}
-                type={f.type}
-                value={profileForm[f.key] || ''}
-                onChange={e => setProfileForm({ ...profileForm, [f.key]: e.target.value })}
-              />
+          {profileLoading ? (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: theme.textMuted }}>
+              Loading profile…
             </div>
-          ))}
-          <button style={{ ...btnPrimary, width: '100%' }} onClick={saveProfile}>
-            Save Profile
-          </button>
+          ) : (
+            <>
+              {/* Read-only info */}
+              <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                {[
+                  { label: 'Email', value: profileData?.email || '—' },
+                ].map(f => (
+                  <div key={f.label} style={{ flex: 1, background: theme.surface2, borderRadius: theme.radiusSm, padding: '10px 14px', border: `1px solid ${theme.border}` }}>
+                    <div style={{ fontSize: 10, color: theme.textDim, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 4 }}>{f.label}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{f.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 16, marginBottom: 16 }} />
+              {[
+                { label: 'Username', key: 'username', type: 'text' },
+                { label: 'Phone Number', key: 'phone_number', type: 'text' },
+              ].map(f => (
+                <div key={f.key} style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>{f.label}</label>
+                  <input
+                    style={formInput}
+                    type={f.type}
+                    value={profileForm[f.key] || ''}
+                    onChange={e => setProfileForm({ ...profileForm, [f.key]: e.target.value })}
+                  />
+                </div>
+              ))}
+              <div style={{ marginBottom: 12 }}>
+                <label style={formLabel}>Department</label>
+                <input
+                  style={{ ...formInput, opacity: 0.5, cursor: 'not-allowed' }}
+                  type="text"
+                  value={profileForm.department || ''}
+                  readOnly
+                />
+              </div>
+              <button style={{ ...btnPrimary, width: '100%' }} onClick={saveProfile}>
+                Save Profile
+              </button>
+            </>
+          )}
         </Modal>
       )}
     </div>
@@ -835,7 +918,7 @@ const gradeBadgeTone = (g) => {
 
 // ─── Styles ──────────────────────────────────────────────
 const appShell = { display: 'flex', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif", background: theme.bg, color: theme.text };
-const sidebar = { width: 240, minWidth: 240, background: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', padding: '28px 0', position: 'fixed', height: '100vh', zIndex: 100 };
+const sidebar = { width: 240, minWidth: 240, background: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', padding: '28px 0', position: 'fixed', height: '100vh', zIndex: 100, overflowY: 'auto' };
 const sidebarLogo = { padding: '0 24px 28px', borderBottom: `1px solid ${theme.border}`, marginBottom: 20 };
 const logoBadge = { display: 'inline-flex', alignItems: 'center', gap: 10 };
 const logoIcon = { width: 36, height: 36, background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 };
@@ -898,7 +981,7 @@ const notifBadge = { background: theme.accent5, color: '#fff', fontSize: 11, fon
 const table = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };
 const th = { textAlign: 'left', padding: '10px 12px', color: theme.textDim, textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 11 };
 const td = { padding: '10px 12px', borderTop: `1px solid ${theme.border}`, color: theme.text };
-const lessonsGrid = { display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20 };
+const lessonsGrid = { display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) minmax(320px, 1.2fr)', gap: 20 };
 const lessonRow = { display: 'flex', gap: 12, padding: '10px 0', borderBottom: `1px solid ${theme.border}`, alignItems: 'flex-start' };
 const lessonText = { fontSize: 13, color: theme.textMuted, marginTop: 6, background: theme.surface2, padding: 10, borderRadius: 6 };
 const link = { fontSize: 13, color: theme.accent, display: 'inline-block', marginTop: 4, textDecoration: 'none' };
