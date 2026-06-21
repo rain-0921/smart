@@ -36,6 +36,12 @@ router.get('/quizzes/:quizId/questions',         i.getQuizQuestions);
 router.post('/quizzes/:quizId/questions',        i.addQuestion);
 router.delete('/questions/:questionId',          i.deleteQuestion);
 
+// Quiz Feedback (score-band messages)
+router.get('/quizzes/:quizId/feedback',          i.getQuizFeedback);
+router.post('/quizzes/:quizId/feedback',         i.addQuizFeedback);
+router.put('/feedback/:feedbackId',              i.updateQuizFeedback);
+router.delete('/feedback/:feedbackId',           i.deleteQuizFeedback);
+
 // Student Progress & Grading
 router.get('/courses/:courseId/students',        i.getCourseStudents);
 router.get('/submissions/pending',               i.getPendingSubmissions);

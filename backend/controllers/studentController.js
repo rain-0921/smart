@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const path = require('path');
+const fs = require('fs');
 
 // ─── DASHBOARD OVERVIEW ──────────────────────────────────
 exports.getDashboard = async (req, res) => {
@@ -346,14 +348,220 @@ exports.submitQuiz = async (req, res) => {
       [percentage, attemptId]
     );
 
+    // Look up the score-band feedback message for this quiz (if the instructor configured any)
+    const [bandRows] = await db.execute(
+      `SELECT feedback_message FROM quiz_feedback
+       WHERE quiz_id=? AND ? BETWEEN min_score AND max_score
+       ORDER BY min_score DESC LIMIT 1`,
+      [attemptRows[0].quiz_id, percentage]
+    );
+    const overallFeedback = bandRows.length > 0 ? bandRows[0].feedback_message : null;
+
     await db.execute(
       `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
        VALUES (?, 'quiz_submit', ?, 'quiz_attempt', ?)`,
       [userId, `Student submitted quiz. Score: ${percentage.toFixed(1)}%`, attemptId]
     );
 
-    res.json({ score: percentage.toFixed(1), totalScore, totalPoints, results });
+    res.json({ score: percentage.toFixed(1), totalScore, totalPoints, overallFeedback, results });
   } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// ─── ASSIGNMENT FILE SUBMISSION ──────────────────────────
+// Returns the file_upload / mixed assignment plus the student's existing submission (if any)
+exports.getAssignment = async (req, res) => {
+  const userId = req.user.user_id;
+  const { quizId } = req.params;
+  try {
+    const [quizRows] = await db.execute(
+      `SELECT q.quiz_id, q.title, q.description, q.due_date, q.submission_type, q.status
+       FROM quiz q WHERE q.quiz_id=?`, [quizId]
+    );
+    if (quizRows.length === 0) return res.status(404).json({ message: 'Assignment not found' });
+    const quiz = quizRows[0];
+
+    if (quiz.submission_type === 'online_quiz') {
+      return res.status(400).json({ message: 'This is not a file-upload assignment' });
+    }
+
+    // The prompt question this assignment's file answer attaches to
+    const [questions] = await db.execute(
+      `SELECT question_id, question_text FROM question WHERE quiz_id=? ORDER BY sort_order LIMIT 1`,
+      [quizId]
+    );
+
+    // Latest attempt + submitted file for this student
+    const [attempts] = await db.execute(
+      `SELECT qa.quiz_attempt_id, qa.status, qa.score, qa.created_at, qa.end_time,
+              a.file_url, a.feedback
+       FROM quiz_attempt qa
+       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id
+       WHERE qa.quiz_id=? AND qa.user_id=?
+       ORDER BY qa.attempt_number DESC LIMIT 1`,
+      [quizId, userId]
+    );
+
+    const now = new Date();
+    const isClosed = quiz.due_date && new Date(quiz.due_date) < now;
+
+    res.json({
+      quiz,
+      question: questions[0] || null,
+      submission: attempts[0] || null,
+      deadline_passed: !!isClosed
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Upload (or resubmit) an assignment file. Multipart: field "file" + optional "text_note"
+exports.submitAssignment = async (req, res) => {
+  const userId = req.user.user_id;
+  const { quizId } = req.params;
+  const textNote = req.body.text_note || null;
+
+  // Helper to delete the just-uploaded file if we must reject the request
+  const cleanupUpload = () => {
+    if (req.file) {
+      fs.unlink(req.file.path, () => {});
+    }
+  };
+
+  if (!req.file) {
+    return res.status(400).json({ message: 'A file is required for submission' });
+  }
+
+  try {
+    const [quizRows] = await db.execute(
+      `SELECT quiz_id, title, due_date, submission_type, status FROM quiz WHERE quiz_id=?`,
+      [quizId]
+    );
+    if (quizRows.length === 0) {
+      cleanupUpload();
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+    const quiz = quizRows[0];
+
+    if (quiz.submission_type === 'online_quiz') {
+      cleanupUpload();
+      return res.status(400).json({ message: 'This assignment does not accept file uploads' });
+    }
+    if (quiz.status !== 'published') {
+      cleanupUpload();
+      return res.status(400).json({ message: 'This assignment is not open for submission' });
+    }
+
+    // Deadline control — reject if the due date has passed
+    if (quiz.due_date && new Date(quiz.due_date) < new Date()) {
+      cleanupUpload();
+      return res.status(400).json({ message: 'The deadline has passed. Submission is closed.' });
+    }
+
+    // Student must be enrolled in the course this assignment belongs to
+    const [enrolled] = await db.execute(
+      `SELECT e.enrollment_id
+       FROM enrollment e
+       JOIN quiz q ON q.course_id = e.course_id
+       WHERE q.quiz_id=? AND e.user_id=? AND e.status='active'`,
+      [quizId, userId]
+    );
+    if (enrolled.length === 0) {
+      cleanupUpload();
+      return res.status(403).json({ message: 'You are not enrolled in this course' });
+    }
+
+    // The prompt question to attach the file answer to
+    const [questions] = await db.execute(
+      `SELECT question_id FROM question WHERE quiz_id=? ORDER BY sort_order LIMIT 1`, [quizId]
+    );
+    if (questions.length === 0) {
+      cleanupUpload();
+      return res.status(400).json({ message: 'This assignment has no submission prompt configured' });
+    }
+    const questionId = questions[0].question_id;
+
+    const fileUrl = `/uploads/${req.file.filename}`;
+
+    // Resubmission: reuse the latest non-graded attempt and overwrite the previous file
+    const [existing] = await db.execute(
+      `SELECT quiz_attempt_id FROM quiz_attempt
+       WHERE quiz_id=? AND user_id=? AND status IN ('in_progress','submitted')
+       ORDER BY attempt_number DESC LIMIT 1`,
+      [quizId, userId]
+    );
+
+    let attemptId;
+    if (existing.length > 0) {
+      attemptId = existing[0].quiz_attempt_id;
+
+      // Remove the previously uploaded file before overwriting
+      const [oldAns] = await db.execute(
+        `SELECT file_url FROM answer WHERE quiz_attempt_id=? AND question_id=?`,
+        [attemptId, questionId]
+      );
+      if (oldAns.length > 0 && oldAns[0].file_url) {
+        const oldPath = path.join(__dirname, '..', oldAns[0].file_url.replace(/^\//, ''));
+        fs.unlink(oldPath, () => {});
+        await db.execute(
+          `UPDATE answer SET user_answer=?, file_url=? WHERE quiz_attempt_id=? AND question_id=?`,
+          [textNote, fileUrl, attemptId, questionId]
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO answer (quiz_attempt_id, question_id, user_answer, file_url)
+           VALUES (?, ?, ?, ?)`,
+          [attemptId, questionId, textNote, fileUrl]
+        );
+      }
+      await db.execute(
+        `UPDATE quiz_attempt SET status='submitted', end_time=NOW() WHERE quiz_attempt_id=?`,
+        [attemptId]
+      );
+    } else {
+      // First submission
+      const [attempt] = await db.execute(
+        `INSERT INTO quiz_attempt (quiz_id, user_id, start_time, end_time, status, attempt_number)
+         VALUES (?, ?, NOW(), NOW(), 'submitted',
+         (SELECT COUNT(*)+1 FROM quiz_attempt qa2 WHERE qa2.quiz_id=? AND qa2.user_id=?))`,
+        [quizId, userId, quizId, userId]
+      );
+      attemptId = attempt.insertId;
+      await db.execute(
+        `INSERT INTO answer (quiz_attempt_id, question_id, user_answer, file_url)
+         VALUES (?, ?, ?, ?)`,
+        [attemptId, questionId, textNote, fileUrl]
+      );
+    }
+
+    // Notify the instructor of the new submission
+    const [instr] = await db.execute(
+      `SELECT q.created_by, q.title FROM quiz q WHERE q.quiz_id=?`, [quizId]
+    );
+    if (instr.length > 0) {
+      await db.execute(
+        `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+         VALUES (?, 'New Submission', ?, 'submission', 'quiz_attempt', ?)`,
+        [instr[0].created_by, `A student submitted "${instr[0].title}".`, attemptId]
+      );
+    }
+
+    await db.execute(
+      `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
+       VALUES (?, 'assignment_submit', ?, 'quiz_attempt', ?)`,
+      [userId, `Submitted assignment "${quiz.title}"`, attemptId]
+    );
+
+    res.status(201).json({
+      message: 'Assignment submitted successfully',
+      attempt_id: attemptId,
+      file_url: fileUrl,
+      status: 'Submitted'
+    });
+  } catch (error) {
+    cleanupUpload();
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

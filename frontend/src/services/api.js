@@ -45,6 +45,11 @@ export const studentCompleteLesson  = (moduleId)   => API.post(`/student/modules
 export const studentGetQuizzes      = (courseId)   => API.get(`/student/courses/${courseId}/quizzes`);
 export const studentStartQuiz       = (quizId)     => API.post(`/student/quizzes/${quizId}/start`);
 export const studentSubmitQuiz      = (attemptId, data) => API.post(`/student/attempts/${attemptId}/submit`, data);
+export const studentGetAssignment   = (quizId)     => API.get(`/student/assignments/${quizId}`);
+export const studentSubmitAssignment= (quizId, formData) =>
+  API.post(`/student/assignments/${quizId}/submit`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
 export const studentGetGrades       = (courseId)   => API.get(`/student/courses/${courseId}/grades`);
 export const studentGetNotifications= ()           => API.get('/student/notifications');
 export const studentMarkRead        = (id)         => API.patch(`/student/notifications/${id}/read`);
@@ -68,6 +73,10 @@ export const instrDeleteQuiz        = (quizId)       => API.delete(`/instructor/
 export const instrGetQuestions      = (quizId)       => API.get(`/instructor/quizzes/${quizId}/questions`);
 export const instrAddQuestion       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/questions`, data);
 export const instrDeleteQuestion    = (questionId)   => API.delete(`/instructor/questions/${questionId}`);
+export const instrGetFeedback       = (quizId)       => API.get(`/instructor/quizzes/${quizId}/feedback`);
+export const instrAddFeedback       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/feedback`, data);
+export const instrUpdateFeedback    = (feedbackId, data) => API.put(`/instructor/feedback/${feedbackId}`, data);
+export const instrDeleteFeedback    = (feedbackId)   => API.delete(`/instructor/feedback/${feedbackId}`);
 export const instrGetStudents       = (courseId)     => API.get(`/instructor/courses/${courseId}/students`);
 export const instrGetPending        = ()             => API.get('/instructor/submissions/pending');
 export const instrGradeSubmission   = (attemptId, data) => API.patch(`/instructor/submissions/${attemptId}/grade`, data);

@@ -356,6 +356,76 @@ exports.deleteQuestion = async (req, res) => {
   }
 };
 
+// ─── QUIZ FEEDBACK (score-band messages) ─────────────────
+exports.getQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  try {
+    const [feedback] = await db.execute(
+      `SELECT quiz_feedback_id, quiz_id, min_score, max_score, feedback_message
+       FROM quiz_feedback WHERE quiz_id=? ORDER BY min_score ASC`, [quizId]
+    );
+    // Warn the instructor if the quiz has already been attempted
+    const [[{ attemptCount }]] = await db.execute(
+      `SELECT COUNT(*) AS attemptCount FROM quiz_attempt WHERE quiz_id=?`, [quizId]
+    );
+    res.json({ feedback, alreadyAttempted: attemptCount > 0 });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.addQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    const [result] = await db.execute(
+      `INSERT INTO quiz_feedback (quiz_id, min_score, max_score, feedback_message)
+       VALUES (?,?,?,?)`,
+      [quizId, min_score, max_score, feedback_message]
+    );
+    res.status(201).json({ message: 'Feedback band added', quiz_feedback_id: result.insertId });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.updateQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    await db.execute(
+      `UPDATE quiz_feedback SET min_score=?, max_score=?, feedback_message=?
+       WHERE quiz_feedback_id=?`,
+      [min_score, max_score, feedback_message, feedbackId]
+    );
+    res.json({ message: 'Feedback band updated' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.deleteQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  try {
+    await db.execute(`DELETE FROM quiz_feedback WHERE quiz_feedback_id=?`, [feedbackId]);
+    res.json({ message: 'Feedback band deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── STUDENT PROGRESS ────────────────────────────────────
 exports.getCourseStudents = async (req, res) => {
   const { courseId } = req.params;
@@ -387,11 +457,13 @@ exports.getPendingSubmissions = async (req, res) => {
     const [submissions] = await db.execute(
       `SELECT qa.quiz_attempt_id, qa.status, qa.created_at, qa.score,
               u.username AS student_name, u.email AS student_email,
-              q.title AS quiz_title, c.title AS course_title
+              q.title AS quiz_title, q.submission_type, c.title AS course_title,
+              a.file_url, a.user_answer AS text_note
        FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
        JOIN user u ON qa.user_id = u.user_id
+       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id AND a.file_url IS NOT NULL
        WHERE q.created_by=? AND qa.status IN ('submitted','in_progress')
        ORDER BY qa.created_at ASC`, [userId]
     );
