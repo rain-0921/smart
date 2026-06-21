@@ -7,6 +7,7 @@ import {
   instrCreateLesson, instrDeleteLesson,
   instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrDeleteQuiz,
   instrGetQuestions, instrAddQuestion, instrDeleteQuestion,
+  instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
   instrGetStudents, instrGetPending, instrGradeSubmission,
   instrGetAnalytics, instrGetNotifications, instrMarkRead
 } from '../services/api';
@@ -89,6 +90,8 @@ export default function InstructorDashboard() {
   const [modules, setModules] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [feedbackBands, setFeedbackBands] = useState([]);
+  const [feedbackWarning, setFeedbackWarning] = useState(false);
   const [students, setStudents] = useState([]);
   const [pending, setPending] = useState([]);
   const [analytics, setAnalytics] = useState(null);
@@ -105,10 +108,12 @@ export default function InstructorDashboard() {
   const [showLessonModal, setShowLessonModal] = useState(false);
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [showQModal, setShowQModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showGradeModal, setShowGradeModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
   const [editingQuiz, setEditingQuiz] = useState(null);
+  const [editingFeedback, setEditingFeedback] = useState(null);
   const [gradingItem, setGradingItem] = useState(null);
 
   // forms
@@ -119,6 +124,7 @@ export default function InstructorDashboard() {
   const blankQ = { question_type: 'mcq', question_text: '', options: ['', '', '', ''], correct_answer: '', points: 1, improvement_tip: '' };
   const blankGrade = { score: '', feedback: '' };
   const blankProfile = { username: '', phone_number: '', department: '', specialization: '', subjects_taught: '', office_hours: '' };
+  const blankFeedback = { min_score: '', max_score: '', feedback_message: '' };
 
   const [courseForm, setCourseForm] = useState(blankCourse);
   const [moduleForm, setModuleForm] = useState(blankModule);
@@ -127,6 +133,7 @@ export default function InstructorDashboard() {
   const [qForm, setQForm] = useState(blankQ);
   const [gradeForm, setGradeForm] = useState(blankGrade);
   const [profileForm, setProfileForm] = useState(blankProfile);
+  const [feedbackForm, setFeedbackForm] = useState(blankFeedback);
 
   const showAlert = (msg, type = 'success') => {
     setAlert({ msg, type });
@@ -161,8 +168,13 @@ export default function InstructorDashboard() {
   // ── Open quiz questions ──
   const openQuiz = async (quiz) => {
     setSelectedQuiz(quiz);
-    const res = await instrGetQuestions(quiz.quiz_id);
-    setQuestions(res.data);
+    const [qRes, fbRes] = await Promise.all([
+      instrGetQuestions(quiz.quiz_id),
+      instrGetFeedback(quiz.quiz_id)
+    ]);
+    setQuestions(qRes.data);
+    setFeedbackBands(fbRes.data.feedback);
+    setFeedbackWarning(fbRes.data.alreadyAttempted);
   };
 
   // ── COURSE CRUD ──
@@ -274,6 +286,41 @@ export default function InstructorDashboard() {
       await instrDeleteQuestion(questionId);
       showAlert('Question deleted');
       instrGetQuestions(selectedQuiz.quiz_id).then(r => setQuestions(r.data));
+    } catch { showAlert('Failed', 'error'); }
+  };
+
+  // ── QUIZ FEEDBACK CRUD ──
+  const openAddFeedback = () => {
+    setEditingFeedback(null);
+    setFeedbackForm({ min_score: '', max_score: '', feedback_message: '' });
+    setShowFeedbackModal(true);
+  };
+  const openEditFeedback = (band) => {
+    setEditingFeedback(band);
+    setFeedbackForm({ min_score: band.min_score, max_score: band.max_score, feedback_message: band.feedback_message });
+    setShowFeedbackModal(true);
+  };
+  const saveFeedback = async () => {
+    try {
+      if (editingFeedback) {
+        await instrUpdateFeedback(editingFeedback.quiz_feedback_id, feedbackForm);
+        showAlert('Feedback band updated!');
+      } else {
+        await instrAddFeedback(selectedQuiz.quiz_id, feedbackForm);
+        showAlert('Feedback band added!');
+      }
+      setShowFeedbackModal(false);
+      const res = await instrGetFeedback(selectedQuiz.quiz_id);
+      setFeedbackBands(res.data.feedback);
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
+  const deleteFeedback = async (id) => {
+    if (!window.confirm('Delete this feedback band?')) return;
+    try {
+      await instrDeleteFeedback(id);
+      showAlert('Feedback band deleted');
+      const res = await instrGetFeedback(selectedQuiz.quiz_id);
+      setFeedbackBands(res.data.feedback);
     } catch { showAlert('Failed', 'error'); }
   };
 
@@ -563,9 +610,10 @@ export default function InstructorDashboard() {
                             </div>
                           </div>
 
-                          {/* Questions inline */}
+                          {/* Questions + Feedback inline */}
                           {selectedQuiz?.quiz_id === q.quiz_id && (
                             <div style={{ marginTop: 10, padding: 10, background: theme.surface2, borderRadius: theme.radiusSm }}>
+                              {/* questions section */}
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                                 <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>Questions ({questions.length})</span>
                                 <button style={{ ...btnSmall, fontSize: 11 }} onClick={() => { setQForm(blankQ); setShowQModal(true); }}>+ Add</button>
@@ -579,6 +627,36 @@ export default function InstructorDashboard() {
                                   <button style={{ ...btnSmall, background: theme.accent5, padding: '2px 6px' }} onClick={() => deleteQuestion(qs.question_id)}>✕</button>
                                 </div>
                               ))}
+
+                              {/* Score-band feedback section */}
+                              <div style={{ marginTop: 14, borderTop: `1px solid ${theme.border}`, paddingTop: 10 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                                    Score-Band Feedback ({feedbackBands.length})
+                                  </span>
+                                  <button style={{ ...btnSmall, fontSize: 11 }} onClick={openAddFeedback}>+ Add Band</button>
+                                </div>
+                                {feedbackWarning && (
+                                  <div style={{ fontSize: 12, color: theme.accent4, marginBottom: 8, padding: '6px 10px', background: 'rgba(249,115,22,0.08)', borderRadius: 6 }}>
+                                    ⚠️ This quiz has already been attempted — changes apply to future attempts only.
+                                  </div>
+                                )}
+                                {feedbackBands.length === 0
+                                  ? <p style={{ fontSize: 12, color: theme.textMuted, margin: 0 }}>No feedback bands yet. Add score ranges to show students a message after submission.</p>
+                                  : feedbackBands.map(band => (
+                                    <div key={band.quiz_feedback_id} style={{ fontSize: 12, padding: '6px 0', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: theme.text }}>
+                                      <div>
+                                        <span style={{ color: theme.accent, fontWeight: 600 }}>{band.min_score}% – {band.max_score}%</span>
+                                        <span style={{ color: theme.textMuted, marginLeft: 10 }}>{band.feedback_message}</span>
+                                      </div>
+                                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                        <button style={{ ...btnSmall, padding: '2px 6px' }} onClick={() => openEditFeedback(band)}>Edit</button>
+                                        <button style={{ ...btnSmall, background: theme.accent5, padding: '2px 6px' }} onClick={() => deleteFeedback(band.quiz_feedback_id)}>✕</button>
+                                      </div>
+                                    </div>
+                                  ))
+                                }
+                              </div>
                             </div>
                           )}
                         </div>
@@ -878,6 +956,23 @@ export default function InstructorDashboard() {
             <div><strong>Student:</strong> {gradingItem.student_name}</div>
             <div><strong>Quiz:</strong> {gradingItem.quiz_title}</div>
             <div><strong>Course:</strong> {gradingItem.course_title}</div>
+            {gradingItem.submission_type !== 'online_quiz' && (
+              <div style={{ marginTop: 8 }}>
+                <strong>Submission:</strong>{' '}
+                {gradingItem.file_url
+                  ? <a href={`http://localhost:5000${gradingItem.file_url}`} target="_blank" rel="noreferrer"
+                      style={{ color: theme.accent }}>
+                      📎 Download File
+                    </a>
+                  : <span style={{ color: theme.textMuted }}>No file uploaded</span>
+                }
+              </div>
+            )}
+            {gradingItem.text_note && (
+              <div style={{ marginTop: 6, fontSize: 13, color: theme.textMuted }}>
+                <strong>Note:</strong> {gradingItem.text_note}
+              </div>
+            )}
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={formLabel}>Score (0–100)</label>
@@ -891,6 +986,43 @@ export default function InstructorDashboard() {
               placeholder="Optional written feedback for the student..." />
           </div>
           <button style={{ ...btnPrimary, width: '100%' }} onClick={saveGrade}>Submit Grade</button>
+        </Modal>
+      )}
+
+      {/* ── FEEDBACK MODAL ── */}
+      {showFeedbackModal && (
+        <Modal title={editingFeedback ? 'Edit Feedback Band' : 'Add Feedback Band'} onClose={() => setShowFeedbackModal(false)}>
+          <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 0, marginBottom: 16 }}>
+            Define a score range and the message shown to students who fall within it after submitting.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={formLabel}>Min Score (%)</label>
+              <input style={formInput} type="number" min="0" max="100"
+                value={feedbackForm.min_score}
+                onChange={e => setFeedbackForm({ ...feedbackForm, min_score: e.target.value })} />
+            </div>
+            <div>
+              <label style={formLabel}>Max Score (%)</label>
+              <input style={formInput} type="number" min="0" max="100"
+                value={feedbackForm.max_score}
+                onChange={e => setFeedbackForm({ ...feedbackForm, max_score: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={formLabel}>Feedback Message (max 500 chars)</label>
+            <textarea style={{ ...formInput, height: 90 }}
+              value={feedbackForm.feedback_message}
+              maxLength={500}
+              onChange={e => setFeedbackForm({ ...feedbackForm, feedback_message: e.target.value })}
+              placeholder="e.g. Great work! You have a solid grasp of this topic." />
+            <div style={{ fontSize: 11, color: theme.textMuted, textAlign: 'right', marginTop: 4 }}>
+              {feedbackForm.feedback_message.length}/500
+            </div>
+          </div>
+          <button style={{ ...btnPrimary, width: '100%' }} onClick={saveFeedback}>
+            {editingFeedback ? 'Update' : 'Add'} Feedback Band
+          </button>
         </Modal>
       )}
 
