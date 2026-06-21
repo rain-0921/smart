@@ -1,5 +1,16 @@
 const db = require('../config/db');
 
+// ─── HELPER ─────────────────────────────────────────────
+// Returns user_id[] for all students actively enrolled in a course.
+// Used by updateCourse and updateQuiz to fan-out notifications on publish.
+async function getActiveEnrolledStudents(courseId) {
+  const [rows] = await db.execute(
+    `SELECT user_id FROM enrollment WHERE course_id=? AND status='active'`,
+    [courseId]
+  );
+  return rows.map(r => r.user_id);
+}
+
 // ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
@@ -121,6 +132,12 @@ exports.updateCourse = async (req, res) => {
   const { title, description, status } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
+    // Grab current status first so we know whether this is a draft -> published transition
+    const [[existing]] = await db.execute(
+      `SELECT status FROM course WHERE course_id=? AND instructor_id=?`, [id, userId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Course not found' });
+
     // Check course has lessons before publishing
     if (status === 'published') {
       const [[{ lessonCount }]] = await db.execute(
@@ -135,6 +152,25 @@ exports.updateCourse = async (req, res) => {
       `UPDATE course SET title=?, description=?, status=? WHERE course_id=? AND instructor_id=?`,
       [title, description||null, status, id, userId]
     );
+
+    // ── FIX: notify enrolled students when course transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `Course Published: ${title}`,
+               `The course "${title}" has been published and is now available.`,
+               'course_published', 'course', id]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Course updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -259,15 +295,18 @@ exports.createQuiz = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, submission_type } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
     const [result] = await db.execute(
       `INSERT INTO quiz (course_id, created_by, title, description, due_date,
-       time_limit_minutes, max_attempts, randomize_questions, submission_type, status)
-       VALUES (?,?,?,?,?,?,?,?,?,'draft')`,
+       time_limit_minutes, max_attempts, randomize_questions, submission_type,
+       num_questions_per_attempt, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,'draft')`,
       [courseId, userId, title, description||null, due_date||null,
-       time_limit_minutes||null, max_attempts||1, randomize_questions||false, submission_type||'online_quiz']
+       time_limit_minutes||null, max_attempts||1, randomize_questions||false,
+       submission_type||'online_quiz', num_questions_per_attempt||null]
     );
     res.status(201).json({ message: 'Quiz created', quiz_id: result.insertId });
   } catch (error) {
@@ -278,8 +317,15 @@ exports.createQuiz = async (req, res) => {
 exports.updateQuiz = async (req, res) => {
   const { quizId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, status } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt, status } = req.body;
   try {
+    // Grab current status + course_id before update (needed for publish check + notify)
+    const [[existing]] = await db.execute(
+      `SELECT status, course_id FROM quiz WHERE quiz_id=?`, [quizId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Quiz not found' });
+
     // Check has questions before publishing
     if (status === 'published') {
       const [[{ qCount }]] = await db.execute(
@@ -290,10 +336,31 @@ exports.updateQuiz = async (req, res) => {
     }
     await db.execute(
       `UPDATE quiz SET title=?, description=?, due_date=?, time_limit_minutes=?,
-       max_attempts=?, randomize_questions=?, status=? WHERE quiz_id=?`,
+       max_attempts=?, randomize_questions=?, submission_type=?,
+       num_questions_per_attempt=?, status=? WHERE quiz_id=?`,
       [title, description||null, due_date||null, time_limit_minutes||null,
-       max_attempts||1, randomize_questions||false, status, quizId]
+       max_attempts||1, randomize_questions||false, submission_type||'online_quiz',
+       num_questions_per_attempt||null, status, quizId]
     );
+
+    // ── FIX: notify enrolled students when quiz transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(existing.course_id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `New Quiz Available: ${title}`,
+               `A new quiz "${title}" has been published in your course.`,
+               'quiz_published', 'quiz', quizId]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Quiz updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
