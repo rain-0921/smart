@@ -26,25 +26,25 @@ async function seed() {
     await db.execute('TRUNCATE TABLE `user`');
     const users = [
       // Admins
-      [1, 'admin01',      'admin01@smis.edu',       hash('Admin@123'),    'admin',      'Administration',   'Mr.',   null, '+60111000001', 'active', '2025-01-01 08:00:00'],
+      [1, 'admin01',      'admin01@smis.edu',       hash('Admin@123'),    'admin',      'Administration',   null, '+60111000001', 'active', '2025-01-01 08:00:00'],
       // Advisors
-      [2, 'advisor01',    'advisor01@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  'Dr.',   null, '+60111000002', 'active', '2025-01-05 08:00:00'],
-      [3, 'advisor02',    'advisor02@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  'Ms.',   null, '+60111000003', 'active', '2025-01-05 08:30:00'],
+      [2, 'advisor01',    'advisor01@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  null, '+60111000002', 'active', '2025-01-05 08:00:00'],
+      [3, 'advisor02',    'advisor02@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  null, '+60111000003', 'active', '2025-01-05 08:30:00'],
       // Instructors
-      [4, 'instructor01', 'instructor01@smis.edu',  hash('Instr@123'),    'instructor', 'Computer Science', 'Dr.',   null, '+60111000004', 'active', '2025-01-10 09:00:00'],
-      [5, 'instructor02', 'instructor02@smis.edu',  hash('Instr@123'),    'instructor', 'Mathematics',      'Prof.', null, '+60111000005', 'active', '2025-01-10 09:30:00'],
-      [6, 'instructor03', 'instructor03@smis.edu',  hash('Instr@123'),    'instructor', 'Data Science',     'Dr.',   null, '+60111000006', 'active', '2025-01-11 09:00:00'],
+      [4, 'instructor01', 'instructor01@smis.edu',  hash('Instr@123'),    'instructor', 'Computer Science', null, '+60111000004', 'active', '2025-01-10 09:00:00'],
+      [5, 'instructor02', 'instructor02@smis.edu',  hash('Instr@123'),    'instructor', 'Mathematics',      null, '+60111000005', 'active', '2025-01-10 09:30:00'],
+      [6, 'instructor03', 'instructor03@smis.edu',  hash('Instr@123'),    'instructor', 'Data Science',     null, '+60111000006', 'active', '2025-01-11 09:00:00'],
       // Students
-      [7,  'student01',   'student01@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null,    null, '+60111000007', 'active', '2025-02-01 10:00:00'],
-      [8,  'student02',   'student02@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null,    null, '+60111000008', 'active', '2025-02-01 10:05:00'],
-      [9,  'student03',   'student03@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null,    null, '+60111000009', 'active', '2025-02-02 10:00:00'],
-      [10, 'student04',   'student04@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null,    null, '+60111000010', 'active', '2025-02-02 10:10:00'],
-      [11, 'student05',   'student05@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null,    null, '+60111000011', 'active', '2025-02-03 10:00:00'],
-      [12, 'student06',   'student06@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null,    null, '+60111000012', 'active', '2025-02-03 10:15:00'],
+      [7,  'student01',   'student01@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null, '+60111000007', 'active', '2025-02-01 10:00:00'],
+      [8,  'student02',   'student02@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null, '+60111000008', 'active', '2025-02-01 10:05:00'],
+      [9,  'student03',   'student03@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null, '+60111000009', 'active', '2025-02-02 10:00:00'],
+      [10, 'student04',   'student04@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null, '+60111000010', 'active', '2025-02-02 10:10:00'],
+      [11, 'student05',   'student05@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null, '+60111000011', 'active', '2025-02-03 10:00:00'],
+      [12, 'student06',   'student06@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null, '+60111000012', 'active', '2025-02-03 10:15:00'],
     ];
     for (const u of users) {
       await db.execute(
-        'INSERT INTO `user` (user_id,username,email,password_hash,role,department,title,photo_url,phone_number,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO `user` (user_id,username,email,password_hash,role,department,photo_url,phone_number,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
         u
       );
     }
@@ -207,7 +207,7 @@ async function seed() {
       [3, 2, 4, 4, 'OOP Classes Assignment',     'Submit your Java assignment.',       'published', '2025-04-20 23:59:00', null,1, 0, null,'file_upload',  '2025-03-15 09:00:00'],
       [4, 3, 6, 5, 'Limits Quiz',                'Test understanding of limits.',     'published', '2025-04-10 23:59:00', 25, 2, 0, null, 'online_quiz', '2025-03-05 09:00:00'],
       [5, 5, 8, 6, 'NumPy & Pandas Quiz',        'Assess Python data skills.',        'published', '2025-04-25 23:59:00', 30, 1, 1, 4,   'online_quiz', '2025-03-20 09:00:00'],
-      [6, 5, 9, 6, 'Data Viz Assignment',        'Submit your chart analysis.',       'closed',    '2025-03-30 23:59:00', null,1, 0, null,'file_upload',  '2025-03-01 09:00:00'],
+      [6, 5, 9, 6, 'Data Viz Assignment',        'Submit your chart analysis.',       'archived',  '2025-03-30 23:59:00', null,1, 0, null,'file_upload',  '2025-03-01 09:00:00'],
     ];
     for (const q of quizzes) {
       await db.execute(
@@ -273,6 +273,12 @@ async function seed() {
         'DataFrame', 2, 'DataFrames are 2D labelled data structures in pandas.', 2],
       [12, 5, 'short_answer', 'How do you read a CSV file using pandas?', null, 'pd.read_csv("filename.csv")', 3, 'Use pd.read_csv() to load CSV data into a DataFrame.', 3],
       [13, 5, 'fill_blank',   'To select a column "age" from a DataFrame df, use df[___].', null, '"age"', 2, 'Use df["column_name"] to access a specific column.', 4],
+
+      // Quiz 3 – OOP Classes Assignment (file_upload prompt)
+      [14, 3, 'short_answer', 'Upload your completed Java OOP assignment (classes & objects). Attach your source files as a ZIP.', null, 'See attached submission.', 10, 'Make sure your classes compile and follow OOP principles.', 1],
+
+      // Quiz 6 – Data Viz Assignment (file_upload prompt)
+      [15, 6, 'short_answer', 'Upload your chart analysis report as a PDF.', null, 'See attached submission.', 10, 'Include clear visualisations and a written interpretation.', 1],
     ];
     for (const q of questions) {
       await db.execute(

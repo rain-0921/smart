@@ -1,5 +1,16 @@
 const db = require('../config/db');
 
+// ─── HELPER ─────────────────────────────────────────────
+// Returns user_id[] for all students actively enrolled in a course.
+// Used by updateCourse and updateQuiz to fan-out notifications on publish.
+async function getActiveEnrolledStudents(courseId) {
+  const [rows] = await db.execute(
+    `SELECT user_id FROM enrollment WHERE course_id=? AND status='active'`,
+    [courseId]
+  );
+  return rows.map(r => r.user_id);
+}
+
 // ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
@@ -121,6 +132,12 @@ exports.updateCourse = async (req, res) => {
   const { title, description, status } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
+    // Grab current status first so we know whether this is a draft -> published transition
+    const [[existing]] = await db.execute(
+      `SELECT status FROM course WHERE course_id=? AND instructor_id=?`, [id, userId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Course not found' });
+
     // Check course has lessons before publishing
     if (status === 'published') {
       const [[{ lessonCount }]] = await db.execute(
@@ -135,6 +152,25 @@ exports.updateCourse = async (req, res) => {
       `UPDATE course SET title=?, description=?, status=? WHERE course_id=? AND instructor_id=?`,
       [title, description||null, status, id, userId]
     );
+
+    // ── FIX: notify enrolled students when course transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `Course Published: ${title}`,
+               `The course "${title}" has been published and is now available.`,
+               'course_published', 'course', id]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Course updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -259,15 +295,18 @@ exports.createQuiz = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, submission_type } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
     const [result] = await db.execute(
       `INSERT INTO quiz (course_id, created_by, title, description, due_date,
-       time_limit_minutes, max_attempts, randomize_questions, submission_type, status)
-       VALUES (?,?,?,?,?,?,?,?,?,'draft')`,
+       time_limit_minutes, max_attempts, randomize_questions, submission_type,
+       num_questions_per_attempt, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,'draft')`,
       [courseId, userId, title, description||null, due_date||null,
-       time_limit_minutes||null, max_attempts||1, randomize_questions||false, submission_type||'online_quiz']
+       time_limit_minutes||null, max_attempts||1, randomize_questions||false,
+       submission_type||'online_quiz', num_questions_per_attempt||null]
     );
     res.status(201).json({ message: 'Quiz created', quiz_id: result.insertId });
   } catch (error) {
@@ -278,8 +317,15 @@ exports.createQuiz = async (req, res) => {
 exports.updateQuiz = async (req, res) => {
   const { quizId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, status } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt, status } = req.body;
   try {
+    // Grab current status + course_id before update (needed for publish check + notify)
+    const [[existing]] = await db.execute(
+      `SELECT status, course_id FROM quiz WHERE quiz_id=?`, [quizId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Quiz not found' });
+
     // Check has questions before publishing
     if (status === 'published') {
       const [[{ qCount }]] = await db.execute(
@@ -290,10 +336,31 @@ exports.updateQuiz = async (req, res) => {
     }
     await db.execute(
       `UPDATE quiz SET title=?, description=?, due_date=?, time_limit_minutes=?,
-       max_attempts=?, randomize_questions=?, status=? WHERE quiz_id=?`,
+       max_attempts=?, randomize_questions=?, submission_type=?,
+       num_questions_per_attempt=?, status=? WHERE quiz_id=?`,
       [title, description||null, due_date||null, time_limit_minutes||null,
-       max_attempts||1, randomize_questions||false, status, quizId]
+       max_attempts||1, randomize_questions||false, submission_type||'online_quiz',
+       num_questions_per_attempt||null, status, quizId]
     );
+
+    // ── FIX: notify enrolled students when quiz transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(existing.course_id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `New Quiz Available: ${title}`,
+               `A new quiz "${title}" has been published in your course.`,
+               'quiz_published', 'quiz', quizId]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Quiz updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -356,6 +423,76 @@ exports.deleteQuestion = async (req, res) => {
   }
 };
 
+// ─── QUIZ FEEDBACK (score-band messages) ─────────────────
+exports.getQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  try {
+    const [feedback] = await db.execute(
+      `SELECT quiz_feedback_id, quiz_id, min_score, max_score, feedback_message
+       FROM quiz_feedback WHERE quiz_id=? ORDER BY min_score ASC`, [quizId]
+    );
+    // Warn the instructor if the quiz has already been attempted
+    const [[{ attemptCount }]] = await db.execute(
+      `SELECT COUNT(*) AS attemptCount FROM quiz_attempt WHERE quiz_id=?`, [quizId]
+    );
+    res.json({ feedback, alreadyAttempted: attemptCount > 0 });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.addQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    const [result] = await db.execute(
+      `INSERT INTO quiz_feedback (quiz_id, min_score, max_score, feedback_message)
+       VALUES (?,?,?,?)`,
+      [quizId, min_score, max_score, feedback_message]
+    );
+    res.status(201).json({ message: 'Feedback band added', quiz_feedback_id: result.insertId });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.updateQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    await db.execute(
+      `UPDATE quiz_feedback SET min_score=?, max_score=?, feedback_message=?
+       WHERE quiz_feedback_id=?`,
+      [min_score, max_score, feedback_message, feedbackId]
+    );
+    res.json({ message: 'Feedback band updated' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.deleteQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  try {
+    await db.execute(`DELETE FROM quiz_feedback WHERE quiz_feedback_id=?`, [feedbackId]);
+    res.json({ message: 'Feedback band deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── STUDENT PROGRESS ────────────────────────────────────
 exports.getCourseStudents = async (req, res) => {
   const { courseId } = req.params;
@@ -387,11 +524,13 @@ exports.getPendingSubmissions = async (req, res) => {
     const [submissions] = await db.execute(
       `SELECT qa.quiz_attempt_id, qa.status, qa.created_at, qa.score,
               u.username AS student_name, u.email AS student_email,
-              q.title AS quiz_title, c.title AS course_title
+              q.title AS quiz_title, q.submission_type, c.title AS course_title,
+              a.file_url, a.user_answer AS text_note
        FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
        JOIN user u ON qa.user_id = u.user_id
+       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id AND a.file_url IS NOT NULL
        WHERE q.created_by=? AND qa.status IN ('submitted','in_progress')
        ORDER BY qa.created_at ASC`, [userId]
     );

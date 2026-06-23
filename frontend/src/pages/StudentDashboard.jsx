@@ -4,6 +4,7 @@ import {
   studentGetDashboard, studentGetProfile, studentUpdateProfile,
   studentGetCourses, studentEnroll, studentGetModules, studentCompleteLesson,
   studentGetQuizzes, studentStartQuiz, studentSubmitQuiz,
+  studentGetAssignment, studentSubmitAssignment,
   studentGetGrades, studentGetNotifications, studentMarkRead
 } from '../services/api';
 
@@ -106,10 +107,16 @@ export default function StudentDashboard() {
   const [selectedCourse, setSelectedCourse] = useState(null);
 
   // quiz state
-  const [activeQuiz, setActiveQuiz] = useState(null); // { attempt_id, quiz, questions }
+  const [activeQuiz, setActiveQuiz] = useState(null);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
   const [timeLeft, setTimeLeft] = useState(null);
+
+  // assignment (file_upload) state
+  const [assignmentData, setAssignmentData] = useState(null); // { quiz, question, submission, deadline_passed }
+  const [assignmentFile, setAssignmentFile] = useState(null);
+  const [assignmentNote, setAssignmentNote] = useState('');
+  const [assignmentUploading, setAssignmentUploading] = useState(false);
 
   // profile form
   const [profileForm, setProfileForm] = useState({});
@@ -240,6 +247,42 @@ export default function StudentDashboard() {
       setTimeLeft(null);
       studentGetGrades(selectedCourse.course_id).then(r => setGrades(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed to submit quiz', 'error'); }
+  };
+
+  // ── Open assignment (file_upload quiz) ──
+  const handleOpenAssignment = async (quizId) => {
+    try {
+      const res = await studentGetAssignment(quizId);
+      setAssignmentData(res.data);
+      setAssignmentFile(null);
+      setAssignmentNote('');
+      setQuizResult(null);
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Cannot load assignment', 'error');
+    }
+  };
+
+  // ── Submit assignment file ──
+  const handleSubmitAssignment = async () => {
+    if (!assignmentFile) { showAlert('Please select a file.', 'error'); return; }
+    setAssignmentUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', assignmentFile);
+      if (assignmentNote) formData.append('text_note', assignmentNote);
+      await studentSubmitAssignment(assignmentData.quiz.quiz_id, formData);
+      showAlert('Assignment submitted successfully!');
+      // Refresh assignment data to reflect new submission
+      const res = await studentGetAssignment(assignmentData.quiz.quiz_id);
+      setAssignmentData(res.data);
+      setAssignmentFile(null);
+      setAssignmentNote('');
+      studentGetGrades(selectedCourse.course_id).then(r => setGrades(r.data));
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Upload failed', 'error');
+    } finally {
+      setAssignmentUploading(false);
+    }
   };
 
   const [profileLoading, setProfileLoading] = useState(false);
@@ -690,6 +733,15 @@ export default function StudentDashboard() {
                           <div style={{ textAlign: 'center', color: theme.textMuted, marginBottom: 20 }}>
                             {quizResult.totalScore} / {quizResult.totalPoints} points
                           </div>
+                          {quizResult.overallFeedback && (
+                            <div style={{
+                              padding: '12px 16px', marginBottom: 16, borderRadius: theme.radiusSm,
+                              background: 'rgba(108,143,255,0.1)', border: '1px solid rgba(108,143,255,0.3)',
+                              fontSize: 14, color: theme.text, textAlign: 'center'
+                            }}>
+                              📝 {quizResult.overallFeedback}
+                            </div>
+                          )}
                           {quizResult.results.map((r, i) => (
                             <div key={i} style={{
                               padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
@@ -716,21 +768,23 @@ export default function StudentDashboard() {
                         </div>
                       )}
 
-                      {!activeQuiz && !quizResult && (
+                      {!activeQuiz && !quizResult && !assignmentData && (
                         <>
                           <div style={card}>
                             <div style={cardHeader}>
-                              <div style={cardTitle}>Quizzes</div>
+                              <div style={cardTitle}>Quizzes & Assignments</div>
                             </div>
                             {quizzes.length === 0
                               ? <div style={emptyStateSmall}>No quizzes yet.</div>
                               : quizzes.map(q => (
                                 <div key={q.quiz_id} style={quizItem}>
-                                  <div style={{ ...quizIcon, background: 'rgba(108,143,255,0.12)' }}>✎</div>
+                                  <div style={{ ...quizIcon, background: q.submission_type !== 'online_quiz' ? 'rgba(167,139,250,0.12)' : 'rgba(108,143,255,0.12)' }}>
+                                    {q.submission_type !== 'online_quiz' ? '📎' : '✎'}
+                                  </div>
                                   <div style={quizInfo}>
                                     <div style={quizName}>{q.title}</div>
                                     <div style={quizMeta}>
-                                      Attempts: {q.attempts_taken}/{q.max_attempts}
+                                      {q.submission_type !== 'online_quiz' ? 'File Upload' : `Attempts: ${q.attempts_taken}/${q.max_attempts}`}
                                     </div>
                                     {q.due_date &&
                                       <div style={{ ...quizMeta, color: theme.accent4 }}>
@@ -738,9 +792,13 @@ export default function StudentDashboard() {
                                       </div>
                                     }
                                   </div>
-                                  {q.attempts_taken < q.max_attempts
-                                    ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
-                                    : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>
+                                  {q.submission_type !== 'online_quiz'
+                                    ? <button style={{ ...btnSmall, background: theme.accent2 }} onClick={() => handleOpenAssignment(q.quiz_id)}>
+                                        {q.attempts_taken > 0 ? 'View / Resubmit' : 'Submit'}
+                                      </button>
+                                    : q.attempts_taken < q.max_attempts
+                                      ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
+                                      : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>
                                   }
                                 </div>
                               ))
@@ -769,6 +827,109 @@ export default function StudentDashboard() {
                             }
                           </div>
                         </>
+                      )}
+
+                      {/* ── ASSIGNMENT SUBMISSION PANEL ── */}
+                      {!activeQuiz && !quizResult && assignmentData && (
+                        <div style={{ ...card, marginBottom: 20 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                            <h3 style={{ margin: 0, fontFamily: "'DM Serif Display', serif", color: theme.text }}>
+                              📎 {assignmentData.quiz.title}
+                            </h3>
+                            <button style={btnGhost} onClick={() => setAssignmentData(null)}>← Back</button>
+                          </div>
+
+                          {assignmentData.quiz.description && (
+                            <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 0, marginBottom: 14 }}>
+                              {assignmentData.quiz.description}
+                            </p>
+                          )}
+
+                          {assignmentData.quiz.due_date && (
+                            <div style={{ fontSize: 13, color: assignmentData.deadline_passed ? theme.accent5 : theme.accent4, marginBottom: 14 }}>
+                              {assignmentData.deadline_passed ? '⛔ Deadline has passed' : `⏱ Due: ${new Date(assignmentData.quiz.due_date).toLocaleString()}`}
+                            </div>
+                          )}
+
+                          {/* existing submission */}
+                          {assignmentData.submission && (
+                            <div style={{ padding: 12, background: theme.surface2, borderRadius: theme.radiusSm, marginBottom: 16, fontSize: 13 }}>
+                              <div style={{ fontWeight: 600, color: theme.text, marginBottom: 6 }}>Current Submission</div>
+                              <div style={{ color: theme.textMuted }}>
+                                Status: <span style={{ color: assignmentData.submission.status === 'graded' ? theme.accent3 : theme.accent4, fontWeight: 600 }}>
+                                  {assignmentData.submission.status}
+                                </span>
+                              </div>
+                              {assignmentData.submission.score != null && (
+                                <div style={{ color: theme.textMuted }}>
+                                  Score: <span style={{ color: theme.accent3, fontWeight: 700 }}>{parseFloat(assignmentData.submission.score).toFixed(1)}%</span>
+                                </div>
+                              )}
+                              {assignmentData.submission.file_url && (
+                                <div style={{ marginTop: 6 }}>
+                                  <a href={`http://localhost:5000${assignmentData.submission.file_url}`} target="_blank" rel="noreferrer"
+                                    style={{ color: theme.accent, fontSize: 13 }}>
+                                    📄 View submitted file
+                                  </a>
+                                </div>
+                              )}
+                              {assignmentData.submission.feedback && (
+                                <div style={{ marginTop: 6, color: theme.textMuted }}>
+                                  Feedback: {assignmentData.submission.feedback}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* upload form — hidden when deadline passed or already graded */}
+                          {!assignmentData.deadline_passed && assignmentData.submission?.status !== 'graded' && (
+                            <div>
+                              <div style={{ marginBottom: 12 }}>
+                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 6 }}>
+                                  {assignmentData.submission ? 'Replace Submission (resubmit)' : 'Upload File'}
+                                  <span style={{ color: theme.textMuted, fontWeight: 400, marginLeft: 6 }}>
+                                    PDF, DOCX, PPTX, ZIP, JPG, PNG · max 50 MB
+                                  </span>
+                                </label>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.docx,.pptx,.zip,.jpg,.jpeg,.png"
+                                  onChange={e => setAssignmentFile(e.target.files[0] || null)}
+                                  style={{ display: 'block', fontSize: 13, color: theme.text, width: '100%' }}
+                                />
+                                {assignmentFile && (
+                                  <div style={{ fontSize: 12, color: theme.accent3, marginTop: 4 }}>
+                                    Selected: {assignmentFile.name} ({(assignmentFile.size / 1024 / 1024).toFixed(2)} MB)
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ marginBottom: 16 }}>
+                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 6 }}>
+                                  Note (optional)
+                                </label>
+                                <textarea
+                                  style={{ width: '100%', background: theme.surface2, border: `1px solid ${theme.border2}`, borderRadius: theme.radiusSm, padding: '8px 12px', color: theme.text, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', minHeight: 60, boxSizing: 'border-box' }}
+                                  placeholder="Add a note to your instructor…"
+                                  value={assignmentNote}
+                                  onChange={e => setAssignmentNote(e.target.value)}
+                                />
+                              </div>
+                              <button
+                                style={{ ...btnSmall, width: '100%', padding: '10px 0', fontSize: 14, opacity: assignmentUploading ? 0.6 : 1 }}
+                                onClick={handleSubmitAssignment}
+                                disabled={assignmentUploading}
+                              >
+                                {assignmentUploading ? 'Uploading…' : assignmentData.submission ? '↑ Resubmit' : '↑ Submit Assignment'}
+                              </button>
+                            </div>
+                          )}
+
+                          {assignmentData.deadline_passed && !assignmentData.submission && (
+                            <div style={{ textAlign: 'center', color: theme.accent5, fontSize: 14, padding: '20px 0' }}>
+                              The deadline has passed. No submission recorded.
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
