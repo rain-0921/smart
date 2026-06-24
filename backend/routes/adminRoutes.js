@@ -37,6 +37,7 @@ router.delete('/notifications/:id',       admin.deleteNotification);
 // GET /reports/types               -> list of available report types
 // GET /reports?type=&startDate=&endDate=  -> generate a report (with "No data available" handling)
 router.get('/reports/types',              admin.getReportTypes);
+router.get('/reports/export',             admin.exportReports);
 router.get('/reports',                    admin.getReports);
 
 // Activity Logs

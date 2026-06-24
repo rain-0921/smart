@@ -256,10 +256,12 @@ exports.getAllNotifications = async (req, res) => {
 //   3. target_all = true        → all active users on the platform
 //   4. course_id                → all active students enrolled in that course
 //
+// Supported notification types: announcement | deadline | quiz_score | admin_broadcast
+//
 // IMPORTANT: notification.user_id has a real FK to user(user_id) (ON DELETE CASCADE),
 // so we cannot insert a sentinel like 0. We always fan out into one row per recipient.
 exports.createNotification = async (req, res) => {
-  const { title, message, target_role, user_id, course_id, target_all, scheduled_at } = req.body;
+  const { title, message, type, target_role, user_id, course_id, target_all, scheduled_at } = req.body;
 
   if (!title || !message) {
     return res.status(400).json({ message: 'Title and message are required' });
@@ -270,6 +272,9 @@ exports.createNotification = async (req, res) => {
       message: 'A target is required: user_id, target_role, course_id, or target_all'
     });
   }
+  // Normalise notification type — default to admin_broadcast if not provided or invalid
+  const VALID_TYPES = ['announcement', 'deadline', 'quiz_score', 'admin_broadcast'];
+  const notifType = type && VALID_TYPES.includes(type) ? type : 'admin_broadcast';
 
   // Treat empty/null scheduled_at as "send now" (NULL in DB means immediate)
   const scheduledAt = scheduled_at && scheduled_at.trim() !== '' ? scheduled_at : null;
@@ -291,8 +296,8 @@ exports.createNotification = async (req, res) => {
       // ── Mode 1: single recipient ───────────────────────────────────────────
       await db.execute(
         `INSERT INTO notification (user_id, title, message, type, target_role, scheduled_at)
-         VALUES (?, ?, ?, 'admin_broadcast', ?, ?)`,
-        [user_id, title, message, target_role || null, scheduledAt]
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [user_id, title, message, notifType, target_role || null, scheduledAt]
       );
       res.status(201).json({ message: 'Notification created successfully', recipients: 1 });
 
@@ -304,7 +309,7 @@ exports.createNotification = async (req, res) => {
       if (recipients.length === 0) {
         return res.status(400).json({ message: `No active users found with role "${target_role}"` });
       }
-      const count = await fanOut(recipients, 'admin_broadcast', target_role);
+      const count = await fanOut(recipients, notifType, target_role);
       res.status(201).json({ message: 'Notification created successfully', recipients: count });
 
     } else if (target_all) {
@@ -315,7 +320,7 @@ exports.createNotification = async (req, res) => {
       if (recipients.length === 0) {
         return res.status(400).json({ message: 'No active users found on the platform' });
       }
-      const count = await fanOut(recipients, 'admin_broadcast', null);
+      const count = await fanOut(recipients, notifType, null);
       res.status(201).json({ message: 'Notification sent to all users', recipients: count });
 
     } else if (course_id) {
@@ -337,7 +342,7 @@ exports.createNotification = async (req, res) => {
           message: `No active enrolled students found for course "${course.title}"`
         });
       }
-      const count = await fanOut(recipients, 'admin_broadcast', null);
+      const count = await fanOut(recipients, notifType, null);
       res.status(201).json({
         message: `Notification sent to enrolled students of "${course.title}"`,
         recipients: count,
@@ -353,6 +358,7 @@ exports.createNotification = async (req, res) => {
 // NOTE: editing only applies to single-recipient notifications. Role-broadcast notifications
 // are fanned out into many rows at creation time (one per user) and are not editable as a
 // group here — delete and recreate the broadcast instead.
+// Only draft notifications (scheduled_at IS NULL) are editable.
 exports.editNotification = async (req, res) => {
   const { id } = req.params;
   const { title, message, scheduled_at } = req.body;
@@ -369,9 +375,10 @@ exports.editNotification = async (req, res) => {
     if (!existing) {
       return res.status(404).json({ message: 'Notification not found' });
     }
-    if (existing.scheduled_at && new Date(existing.scheduled_at) <= new Date()) {
+    // Only draft notifications (not yet queued) can be edited
+    if (existing.scheduled_at !== null) {
       return res.status(400).json({
-        message: 'Cannot edit a notification that has already been sent'
+        message: 'Only draft notifications can be edited. Delete this notification and create a new one.'
       });
     }
 
@@ -544,38 +551,137 @@ async function buildUserRegistrationReport(startDate, endDate) {
   return { isEmpty: false, summary: { total: rows.length, byRole }, data: rows };
 }
 
+// Export a generated report as CSV (same types + filters as getReports).
+exports.exportReports = async (req, res) => {
+  const type = req.query.type || 'summary';
+  const { startDate, endDate } = req.query;
+
+  if (!REPORT_TYPES.some(r => r.key === type)) {
+    return res.status(400).json({ message: `Unknown report type "${type}"` });
+  }
+
+  try {
+    let rows = [];
+    let headers = [];
+
+    if (type === 'student_enrollment') {
+      headers = ['enrollment_id', 'student_name', 'student_email', 'course_title', 'status', 'completion_percent', 'enrolled_at'];
+      const { clause, params: p } = buildDateRange('e.enrolled_at', startDate, endDate);
+      const where = clause ? `WHERE ${clause}` : '';
+      [rows] = await db.execute(
+        `SELECT e.enrollment_id, u.username AS student_name, u.email AS student_email,
+                c.title AS course_title, e.status, e.completion_percent, e.enrolled_at
+         FROM enrollment e
+         JOIN user u ON e.user_id = u.user_id
+         JOIN course c ON e.course_id = c.course_id
+         ${where}
+         ORDER BY e.enrolled_at DESC`,
+        p
+      );
+    } else if (type === 'course_performance') {
+      headers = ['course_id', 'course_title', 'instructor_name', 'total_enrolled', 'completed', 'active', 'dropped', 'avg_completion'];
+      const { clause, params: p } = buildDateRange('e.enrolled_at', startDate, endDate);
+      const join = clause ? `AND ${clause}` : '';
+      [rows] = await db.execute(
+        `SELECT c.course_id, c.title AS course_title, u.username AS instructor_name,
+                COUNT(e.enrollment_id) AS total_enrolled,
+                SUM(CASE WHEN e.status='completed' THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN e.status='active'    THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN e.status='dropped'   THEN 1 ELSE 0 END) AS dropped,
+                ROUND(AVG(e.completion_percent), 2) AS avg_completion
+         FROM course c
+         JOIN user u ON c.instructor_id = u.user_id
+         LEFT JOIN enrollment e ON c.course_id = e.course_id ${join}
+         GROUP BY c.course_id
+         ORDER BY total_enrolled DESC`,
+        p
+      );
+    } else if (type === 'user_registration') {
+      headers = ['user_id', 'username', 'email', 'role', 'status', 'created_at'];
+      const { clause, params: p } = buildDateRange('created_at', startDate, endDate);
+      const where = clause ? `WHERE ${clause}` : '';
+      [rows] = await db.execute(
+        `SELECT user_id, username, email, role, status, created_at FROM user ${where} ORDER BY created_at DESC`,
+        p
+      );
+    } else {
+      // summary — export course-level enrollment counts
+      headers = ['title', 'enrollments'];
+      const [courseStats] = await db.execute(
+        `SELECT c.title, COUNT(e.enrollment_id) AS enrollments
+         FROM course c LEFT JOIN enrollment e ON c.course_id = e.course_id
+         GROUP BY c.course_id ORDER BY enrollments DESC`
+      );
+      rows = courseStats;
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No data available to export' });
+    }
+
+    if (headers.length === 0) headers = Object.keys(rows[0]);
+    const lines = [headers.join(',')];
+    for (const row of rows) {
+      lines.push(headers.map(h => toCsvValue(row[h])).join(','));
+    }
+    const csv = lines.join('\r\n');
+    const filename = `report_${type}_${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── ACTIVITY LOGS ───────────────────────────────────────
 // Spec 7.3.7 (AdminManageActivityLogs): list users with most recent activity,
 // filter by role / date range / activity type, drill into one user's full
 // history, show "No records found" when empty, and export the log as a file.
 
+// Map UI-friendly category labels → the raw activity_type values stored in DB.
+const ACTIVITY_CATEGORIES = {
+  'Course Activity':     ['enroll', 'course_create'],
+  'Learning Activity':   ['lesson_complete', 'quiz_submit', 'assignment_submit'],
+  'Content Activity':   ['video_watch', 'page_visit', 'lesson_view'],
+  'System Activity':    ['login', 'profile_update', 'user_create'],
+};
+const ACTIVITY_CATEGORY_KEYS = Object.keys(ACTIVITY_CATEGORIES);
+
 // Build the shared WHERE clause for the log list / per-user / export queries.
+// Supports both a raw activityType (exact match) and an activityCategory (mapped to types).
 function buildActivityFilters(query) {
-  const { role, activityType, startDate, endDate, userId } = query;
+  const { role, activityType, activityCategory, startDate, endDate, userId } = query;
   const clauses = [];
   const params = [];
-  if (userId)       { clauses.push('a.user_id = ?');       params.push(userId); }
-  if (role)         { clauses.push('u.role = ?');          params.push(role); }
-  if (activityType) { clauses.push('a.activity_type = ?'); params.push(activityType); }
+  if (userId) { clauses.push('a.user_id = ?'); params.push(userId); }
+  if (role)   { clauses.push('u.role = ?');   params.push(role); }
+
+  // Prefer category over raw type when both are supplied.
+  const types = activityCategory && ACTIVITY_CATEGORIES[activityCategory]
+    ? ACTIVITY_CATEGORIES[activityCategory]
+    : activityType ? [activityType] : [];
+
+  if (types.length === 1) {
+    clauses.push('a.activity_type = ?');
+    params.push(types[0]);
+  } else if (types.length > 1) {
+    clauses.push(`a.activity_type IN (${types.map(() => '?').join(',')})`);
+    params.push(...types);
+  }
+
   const dr = buildDateRange('a.created_at', startDate, endDate);
   if (dr.clause) { clauses.push(dr.clause); params.push(...dr.params); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   return { where, params };
 }
 
-// Filter options for the UI dropdowns (roles + the activity types in use).
+// Filter options for the UI dropdowns (roles + activity categories).
 exports.getActivityFilters = async (req, res) => {
-  try {
-    const [types] = await db.execute(
-      `SELECT DISTINCT activity_type FROM activity_log ORDER BY activity_type`
-    );
-    res.json({
-      roles: ['student', 'instructor', 'advisor', 'admin'],
-      activityTypes: types.map(t => t.activity_type),
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
+  res.json({
+    roles:            ['student', 'instructor', 'advisor', 'admin'],
+    activityTypes:   ACTIVITY_CATEGORY_KEYS,
+  });
 };
 
 // Initial screen: "a list of all users with their most recent tracked activities".

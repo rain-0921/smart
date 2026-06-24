@@ -4,7 +4,7 @@ import {
   adminGetUsers, adminAddUser, adminEditUser, adminDeactivateUser,
   adminGetCourses, adminAddCourse, adminEditCourse, adminArchiveCourse,
   adminGetEnrollments, adminAddEnrollment, adminEditEnrollment, adminDropEnrollment,
-  adminGetReports, adminGetReportTypes, adminGetDashboard, adminGetLogs, adminGetLogFilters, adminGetLogUsers,
+  adminGetReports, adminExportReports, adminGetReportTypes, adminGetDashboard, adminGetLogs, adminGetLogFilters, adminGetLogUsers,
   adminExportLogs, adminGetNotifications, adminCreateNotification,
   adminEditNotification, adminDeleteNotification,
 } from '../services/api';
@@ -239,7 +239,7 @@ export default function AdminDashboard() {
   const [courseForm, setCourseForm] = useState({ title: '', description: '', instructor_id: '', status: 'draft' });
   const [enrollForm, setEnrollForm] = useState({ user_id: '', course_id: '' });
   const [enrollEditForm, setEnrollEditForm] = useState({ user_id: '', course_id: '', status: 'active' });
-  const [notifForm, setNotifForm]   = useState({ title: '', message: '', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
+  const [notifForm, setNotifForm]   = useState({ title: '', message: '', type: 'announcement', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
 
   const showAlert = (msg, type = 'success') => {
     setAlert({ msg, type });
@@ -358,7 +358,7 @@ export default function AdminDashboard() {
   // ── NOTIFICATIONS ──
   const openAddNotif = () => {
     setEditingNotif(null);
-    setNotifForm({ title: '', message: '', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
+    setNotifForm({ title: '', message: '', type: 'announcement', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
     setShowNotifModal(true);
   };
   const openEditNotif = (n) => {
@@ -366,6 +366,7 @@ export default function AdminDashboard() {
     const mode = n.course_id ? 'course' : n.user_id ? 'user' : n.target_role ? 'role' : 'all';
     setNotifForm({
       title: n.title, message: n.message,
+      type: n.type || 'announcement',
       target_mode: mode,
       target_role: n.target_role || 'student',
       user_id: n.user_id || '',
@@ -380,7 +381,7 @@ export default function AdminDashboard() {
       showAlert('Title and message are required', 'error');
       return;
     }
-    const payload = { title: notifForm.title, message: notifForm.message };
+    const payload = { title: notifForm.title, message: notifForm.message, type: notifForm.type };
     if (notifForm.target_mode === 'user')      payload.user_id     = notifForm.user_id;
     if (notifForm.target_mode === 'role')      payload.target_role = notifForm.target_role;
     if (notifForm.target_mode === 'all')       payload.target_all   = true;
@@ -401,18 +402,18 @@ export default function AdminDashboard() {
 
   // ── ACTIVITY LOG FILTERS ──
   const [logFilterRole, setLogFilterRole]         = useState('');
-  const [logFilterType, setLogFilterType]         = useState('');
+  const [logFilterCategory, setLogFilterCategory] = useState('');
   const [logFilterStart, setLogFilterStart]       = useState('');
   const [logFilterEnd, setLogFilterEnd]           = useState('');
-  const [logFilterUsers, setLogFilterUsers]       = useState([]);
-  const [logActivityTypes, setLogActivityTypes]   = useState([]);
+  const [logFilterRoles, setLogFilterRoles]       = useState([]);
+  const [logActivityCategories, setLogActivityCategories] = useState([]);
   const [filterLoading, setFilterLoading]         = useState(false);
 
   // fetch filter options once on mount
   useEffect(() => {
     adminGetLogFilters().then(r => {
-      setLogFilterUsers(r.data?.roles || []);
-      setLogActivityTypes(r.data?.activityTypes || []);
+      setLogFilterRoles(r.data?.roles || []);
+      setLogActivityCategories(r.data?.activityTypes || []);
     }).catch(() => {});
   }, []);
 
@@ -420,23 +421,23 @@ export default function AdminDashboard() {
     setFilterLoading(true);
     try {
       const params = {};
-      if (logFilterRole)   params.role          = logFilterRole;
-      if (logFilterType)  params.activityType  = logFilterType;
-      if (logFilterStart) params.startDate     = logFilterStart;
-      if (logFilterEnd)   params.endDate       = logFilterEnd;
+      if (logFilterRole)      params.role            = logFilterRole;
+      if (logFilterCategory)  params.activityCategory = logFilterCategory;
+      if (logFilterStart)     params.startDate        = logFilterStart;
+      if (logFilterEnd)       params.endDate          = logFilterEnd;
       const res = await adminGetLogs(params);
       setLogs(res.data?.data ?? res.data ?? []);
       setLogViewMode('logs');
     } catch { showAlert('Failed to load logs', 'error'); }
     finally { setFilterLoading(false); }
-  }, [logFilterRole, logFilterType, logFilterStart, logFilterEnd]);
+  }, [logFilterRole, logFilterCategory, logFilterStart, logFilterEnd]);
 
   const exportLogs = async () => {
     const params = {};
-    if (logFilterRole)   params.role         = logFilterRole;
-    if (logFilterType)  params.activityType = logFilterType;
-    if (logFilterStart) params.startDate     = logFilterStart;
-    if (logFilterEnd)   params.endDate      = logFilterEnd;
+    if (logFilterRole)      params.role            = logFilterRole;
+    if (logFilterCategory)  params.activityCategory = logFilterCategory;
+    if (logFilterStart)     params.startDate        = logFilterStart;
+    if (logFilterEnd)       params.endDate          = logFilterEnd;
     try {
       const res = await adminExportLogs(params);
       const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
@@ -473,9 +474,29 @@ export default function AdminDashboard() {
     finally { setReportLoading(false); }
   }, [selectedReportType, reportStart, reportEnd]);
 
+  const exportReport = async () => {
+    const params = { type: selectedReportType };
+    if (reportStart) params.startDate = reportStart;
+    if (reportEnd)   params.endDate   = reportEnd;
+    try {
+      const res = await adminExportReports(params);
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `report_${selectedReportType}_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Failed to export report', 'error');
+    }
+  };
+
   const resetLogFilters = () => {
     setLogFilterRole('');
-    setLogFilterType('');
+    setLogFilterCategory('');
     setLogFilterStart('');
     setLogFilterEnd('');
     setLogViewMode('user-list');
@@ -711,11 +732,12 @@ export default function AdminDashboard() {
                 : notifications.length === 0
                   ? <Empty>No notifications found.</Empty>
                   : <div className="adm-table-wrap"><table style={table}>
-                      <thead><tr>{['Title', 'Message', 'Target', 'Delivery', 'Created', 'Actions'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                      <thead><tr>{['Title', 'Type', 'Message', 'Target', 'Delivery', 'Created', 'Actions'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                       <tbody>{notifications.map(n => (
                         <tr key={n.notification_id} className="adm-table-row">
                           <td style={{ ...td, fontWeight: 600, color: token.ink }}>{n.title}</td>
-                          <td style={{ ...td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</td>
+                          <td style={td}><span style={typeBadge(n.type)}>{n.type}</span></td>
+                          <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</td>
                           <td style={td}>
                             {n.recipient_name
                               ? <span style={roleBadge('student')}>{n.recipient_name}</span>
@@ -734,7 +756,7 @@ export default function AdminDashboard() {
                           </td>
                           <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(n.created_at).toLocaleDateString()}</td>
                           <td style={td}>
-                            {(n.delivery_status === 'scheduled' || n.delivery_status === 'draft') && !n.recipient_name && (
+                            {(n.delivery_status === 'draft') && !n.recipient_name && (
                               <button className="adm-row-btn" style={btnSmall} onClick={() => openEditNotif(n)}>Edit</button>
                             )}
                             <button className="adm-row-btn" style={{ ...btnSmall, background: token.danger, color: '#fff' }} onClick={() => deleteNotif(n.notification_id)}>Delete</button>
@@ -773,6 +795,11 @@ export default function AdminDashboard() {
                 <button className="adm-btn" style={{ background: token.indigo, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={runReport} disabled={reportLoading}>
                   {reportLoading ? 'Loading…' : 'Generate Report'}
                 </button>
+                {reports && !reports.isEmpty && (
+                  <button className="adm-btn" style={{ background: token.brass, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={exportReport}>
+                    Export CSV
+                  </button>
+                )}
               </div>
 
               {/* Results */}
@@ -863,15 +890,15 @@ export default function AdminDashboard() {
                   <select className="adm-input" style={{ ...formInput, width: 130 }} value={logFilterRole}
                     onChange={e => setLogFilterRole(e.target.value)}>
                     <option value="">All roles</option>
-                    {logFilterUsers.map(r => <option key={r} value={r}>{r}</option>)}
+                    {logFilterRoles.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
                 <div>
                   <label style={{ ...formLabel, marginBottom: 3 }}>Activity Type</label>
-                  <select className="adm-input" style={{ ...formInput, width: 160 }} value={logFilterType}
-                    onChange={e => setLogFilterType(e.target.value)}>
+                  <select className="adm-input" style={{ ...formInput, width: 160 }} value={logFilterCategory}
+                    onChange={e => setLogFilterCategory(e.target.value)}>
                     <option value="">All types</option>
-                    {logActivityTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    {logActivityCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1082,6 +1109,16 @@ export default function AdminDashboard() {
                 onChange={e => setNotifForm({ ...notifForm, message: e.target.value })} placeholder="Write your notification message here..." />
             </div>
             <div style={{ marginBottom: 12 }}>
+              <label style={formLabel}>Notification Type</label>
+              <select className="adm-input" style={formInput} value={notifForm.type}
+                onChange={e => setNotifForm({ ...notifForm, type: e.target.value })}>
+                <option value="announcement">Announcement</option>
+                <option value="deadline">Deadline Alert</option>
+                <option value="quiz_score">Quiz Score</option>
+                <option value="admin_broadcast">General Broadcast</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: 12 }}>
               <label style={formLabel}>Target Audience</label>
               <select className="adm-input" style={formInput} value={notifForm.target_mode}
                 onChange={e => setNotifForm({ ...notifForm, target_mode: e.target.value })}>
@@ -1189,4 +1226,9 @@ const statusBadge = (s) => ({
   display: 'inline-block', padding: '2px 10px', borderRadius: 99, fontSize: 11.5, fontWeight: 600,
   background: { active: token.goodSoft, inactive: token.line, suspended: token.dangerSoft, draft: token.warnSoft, published: token.goodSoft, archived: token.line }[s] || token.line,
   color: { active: token.good, inactive: token.inkSoft, suspended: token.danger, draft: token.warn, published: token.good, archived: token.inkSoft }[s] || token.inkSoft,
+});
+const typeBadge = (t) => ({
+  display: 'inline-block', padding: '2px 10px', borderRadius: 99, fontSize: 11.5, fontWeight: 600,
+  background: { announcement: '#EEF2FF', deadline: '#FEF3C7', quiz_score: '#D1FAE5', admin_broadcast: token.brassSoft }[t] || token.line,
+  color: { announcement: token.indigo, deadline: token.warn, quiz_score: token.good, admin_broadcast: token.brass }[t] || token.inkSoft,
 });

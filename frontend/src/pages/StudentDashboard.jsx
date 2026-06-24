@@ -6,7 +6,7 @@ import {
   studentGetQuizzes, studentStartQuiz, studentSubmitQuiz,
   studentGetAssignment, studentSubmitAssignment,
   studentGetGrades, studentGetGradeDetail, studentGetProgress,
-  studentGetNotifications, studentMarkRead
+  studentGetNotifications, studentMarkRead, studentLogActivity
 } from '../services/api';
 
 const token = {
@@ -339,6 +339,12 @@ export default function StudentDashboard() {
     setQuizzes([]);
     setGrades([]);
     setTab('lessons');
+    studentLogActivity({
+      activity_type: 'page_visit',
+      description: `Viewed course: ${course.title}`,
+      related_item_type: 'course',
+      related_item_id: course.course_id,
+    }).catch(() => {});
     try {
       const [m, q, g] = await Promise.all([
         studentGetModules(course.course_id),
@@ -852,11 +858,25 @@ export default function StudentDashboard() {
                                   {l.duration_minutes &&
                                     <div style={{ fontSize: 12, color: theme.textDim }}>{l.duration_minutes} min</div>
                                   }
-                                  {l.content_url &&
+                                  {l.content_url && l.content_type === 'video' && (
+                                    <button
+                                      style={{ ...link, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: 'inherit', color: theme.accent }}
+                                      onClick={() => {
+                                        studentLogActivity({
+                                          activity_type: 'video_watch',
+                                          description: `Watched video: ${l.title}`,
+                                          related_item_type: 'lesson',
+                                          related_item_id: l.lesson_id,
+                                        }).catch(() => {});
+                                        window.open(l.content_url, '_blank', 'noreferrer');
+                                      }}
+                                    >Open Content ↗</button>
+                                  )}
+                                  {l.content_url && l.content_type !== 'video' && (
                                     <a href={l.content_url} target="_blank" rel="noreferrer" style={link}>
                                       Open Content ↗
                                     </a>
-                                  }
+                                  )}
                                   {l.content_text &&
                                     <div style={lessonText}>
                                       {l.content_text}

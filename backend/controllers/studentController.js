@@ -830,3 +830,27 @@ exports.getGradeDetail = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
+// ─── ACTIVITY LOGGING ─────────────────────────────────────
+// Logs page_visit and video_watch activity for the admin activity log.
+// Allowed types: page_visit | video_watch
+exports.logActivity = async (req, res) => {
+  const userId = req.user.user_id;
+  const { activity_type, description, related_item_type, related_item_id } = req.body;
+
+  const ALLOWED = ['page_visit', 'video_watch'];
+  if (!activity_type || !ALLOWED.includes(activity_type)) {
+    return res.status(400).json({ message: 'Invalid activity_type' });
+  }
+
+  try {
+    await db.execute(
+      `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [userId, activity_type, description || null, related_item_type || null, related_item_id || null]
+    );
+    res.json({ message: 'Activity logged' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};

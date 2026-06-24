@@ -32,10 +32,11 @@ export const adminEditEnrollment = (id, data) => API.put(`/admin/enrollments/${i
 export const adminDropEnrollment = (id)     => API.patch(`/admin/enrollments/${id}/drop`);
 
 // Admin - Reports & Logs
-export const adminGetReports     = ()       => API.get('/admin/reports');
+export const adminGetReports     = (params) => API.get('/admin/reports', { params });
+export const adminExportReports  = (params) => API.get('/admin/reports/export', { params, responseType: 'blob' });
 export const adminGetReportTypes = ()       => API.get('/admin/reports/types');
 export const adminGetDashboard   = ()       => API.get('/admin/dashboard');
-export const adminGetLogs        = ()       => API.get('/admin/activity-logs');
+export const adminGetLogs        = (params) => API.get('/admin/activity-logs', { params });
 export const adminGetLogFilters  = ()       => API.get('/admin/activity-logs/filters');
 export const adminGetLogUsers    = ()       => API.get('/admin/activity-logs/users');
 export const adminExportLogs     = (params) => API.get('/admin/activity-logs/export', { params });
@@ -67,6 +68,7 @@ export const studentGetNotifications= ()           => API.get('/student/notifica
 export const studentMarkRead        = (id)         => API.patch(`/student/notifications/${id}/read`);
 export const studentGetProgress    = ()           => API.get('/student/progress');
 export const studentGetGradeDetail = (attemptId)  => API.get(`/student/attempts/${attemptId}/detail`);
+export const studentLogActivity    = (data)       => API.post('/student/log-activity', data);
 // Instructor
 export const instrGetDashboard      = ()             => API.get('/instructor/dashboard');
 export const instrGetProfile        = ()             => API.get('/instructor/profile');
