@@ -162,7 +162,7 @@ References	33
 
 #### Admin
 
-#### Admins can help to manage user accounts, manage courses, assign instructors to courses, post announcements, manage student enrolments, view reports, and handle messages from users.
+#### Admins can help to manage user accounts, manage courses, assign instructors to courses, post announcements, manage student enrolments, view reports.
 
  
 

@@ -23,5 +23,6 @@ router.get('/attempts/:attemptId/detail',   s.getGradeDetail);
 router.get('/progress',                     s.getProgress);
 router.get('/notifications',                s.getNotifications);
 router.patch('/notifications/:id/read',     s.markNotificationRead);
+router.post('/log-activity',                s.logActivity);
 
 module.exports = router;

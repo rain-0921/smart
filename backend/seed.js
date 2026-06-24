@@ -392,6 +392,9 @@ async function seed() {
       [13, 12, 'lesson_view',     'Viewed lesson: Matplotlib Basics.',     'lesson',      11,   '2025-04-01 08:30:00'],
       [14, 1,  'user_create',     'Admin created user student06.',         'user',        12,   '2025-02-03 10:20:00'],
       [15, 10, 'enrollment',      'Enrolled in Calculus I.',               'course',      3,    '2025-02-12 09:10:00'],
+      [16, 7,  'page_visit',      'Viewed course: Web Development.',       'course',      1,    '2025-03-20 09:00:00'],
+      [17, 7,  'video_watch',     'Watched video: Intro to HTML.',         'lesson',      1,    '2025-03-20 09:05:00'],
+      [18, 8,  'page_visit',      'Viewed course: Calculus I.',           'course',      3,    '2025-03-21 10:00:00'],
     ];
     for (const l of activityLogs) {
       await db.execute(
