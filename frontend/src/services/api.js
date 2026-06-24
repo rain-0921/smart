@@ -28,11 +28,23 @@ export const adminArchiveCourse  = (id)     => API.patch(`/admin/courses/${id}/a
 // Admin - Enrollments
 export const adminGetEnrollments = ()       => API.get('/admin/enrollments');
 export const adminAddEnrollment  = (data)   => API.post('/admin/enrollments', data);
+export const adminEditEnrollment = (id, data) => API.put(`/admin/enrollments/${id}`, data);
 export const adminDropEnrollment = (id)     => API.patch(`/admin/enrollments/${id}/drop`);
 
 // Admin - Reports & Logs
 export const adminGetReports     = ()       => API.get('/admin/reports');
+export const adminGetReportTypes = ()       => API.get('/admin/reports/types');
+export const adminGetDashboard   = ()       => API.get('/admin/dashboard');
 export const adminGetLogs        = ()       => API.get('/admin/activity-logs');
+export const adminGetLogFilters  = ()       => API.get('/admin/activity-logs/filters');
+export const adminGetLogUsers    = ()       => API.get('/admin/activity-logs/users');
+export const adminExportLogs     = (params) => API.get('/admin/activity-logs/export', { params });
+
+// Admin - Notifications
+export const adminGetNotifications    = ()       => API.get('/admin/notifications');
+export const adminCreateNotification  = (data)  => API.post('/admin/notifications', data);
+export const adminEditNotification    = (id, data) => API.put(`/admin/notifications/${id}`, data);
+export const adminDeleteNotification  = (id)    => API.delete(`/admin/notifications/${id}`);
 
 // Student
 export const studentGetDashboard    = ()           => API.get('/student/dashboard');
