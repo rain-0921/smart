@@ -328,19 +328,23 @@ export default function AdminDashboard() {
                 <div style={cardHeader}>
                   <h3 style={cardTitle}>Top Courses by Enrollment</h3>
                 </div>
-                <table style={table}>
-                  <thead>
-                    <tr>{['Course Title', 'Enrollments'].map(h => <th key={h} style={th}>{h}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {reports.courseStats.map((c, i) => (
-                      <tr key={i}>
-                        <td style={td}>{c.title}</td>
-                        <td style={td}>{c.enrollments}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {(reports.courseStats && reports.courseStats.length > 0) ? (
+                  <table style={table}>
+                    <thead>
+                      <tr>{['Course Title', 'Enrollments'].map(h => <th key={h} style={th}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {reports.courseStats.map((c, i) => (
+                        <tr key={i}>
+                          <td style={td}>{c.title}</td>
+                          <td style={td}>{c.enrollments}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p style={{ color: theme.textMuted, fontSize: 13 }}>No course data yet.</p>
+                )}
               </div>
             </div>
           )}
