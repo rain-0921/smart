@@ -347,7 +347,10 @@ export default function StudentDashboard() {
   const avgCompletion = dashboard?.enrollments?.length
     ? Math.round(dashboard.enrollments.reduce((sum, e) => sum + (Number(e.completion_percent) || 0), 0) / dashboard.enrollments.length)
     : null;
-  const gpa = dashboard?.profile?.gpa ? dashboard.profile.gpa.toFixed(2) : '—';
+  const gpaValue = dashboard?.profile?.gpa;
+  const gpa = gpaValue != null && !Number.isNaN(Number(gpaValue))
+    ? Number(gpaValue).toFixed(2)
+    : '—';
   const atRisk = dashboard?.profile?.is_at_risk;
   const deadlinesCount = dashboard?.deadlines?.length || 0;
 

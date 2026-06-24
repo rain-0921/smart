@@ -19,6 +19,8 @@ router.post('/attempts/:attemptId/submit',  s.submitQuiz);
 router.get('/assignments/:quizId',          s.getAssignment);
 router.post('/assignments/:quizId/submit',  uploadSubmission, s.submitAssignment);
 router.get('/courses/:courseId/grades',     s.getGrades);
+router.get('/attempts/:attemptId/detail',   s.getGradeDetail);
+router.get('/progress',                     s.getProgress);
 router.get('/notifications',                s.getNotifications);
 router.patch('/notifications/:id/read',     s.markNotificationRead);
 

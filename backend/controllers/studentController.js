@@ -67,9 +67,12 @@ exports.getProfile = async (req, res) => {
     const [rows] = await db.execute(
       `SELECT u.user_id, u.username, u.email, u.department,
               u.phone_number, u.photo_url,
-              sp.academic_level, sp.programme, sp.learning_preferences, sp.gpa
+              sp.academic_level, sp.programme, sp.learning_preferences, sp.gpa,
+              sp.is_at_risk,
+              adv.username AS advisor_name, adv.email AS advisor_email
        FROM user u
        LEFT JOIN student_profile sp ON u.user_id = sp.user_id
+       LEFT JOIN user adv ON sp.advisor_id = adv.user_id
        WHERE u.user_id = ?`,
       [userId]
     );
@@ -548,6 +551,13 @@ exports.submitAssignment = async (req, res) => {
       );
     }
 
+    // Confirmation notification for the student themselves
+    await db.execute(
+      `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+       VALUES (?, 'Submission Confirmed', ?, 'submission_confirm', 'quiz_attempt', ?)`,
+      [userId, `Your submission for "${quiz.title}" has been received and is pending review.`, attemptId]
+    );
+
     await db.execute(
       `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
        VALUES (?, 'assignment_submit', ?, 'quiz_attempt', ?)`,
@@ -607,6 +617,215 @@ exports.markNotificationRead = async (req, res) => {
   try {
     await db.execute('UPDATE notification SET is_read=1 WHERE notification_id=?', [id]);
     res.json({ message: 'Marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+// ─── PROGRESS TRACKING (UC7) ─────────────────────────────
+// Returns per-course completion, quiz performance, GPA and recommended next steps.
+exports.getProgress = async (req, res) => {
+  const userId = req.user.user_id;
+  try {
+    // ── 1. GPA & at-risk flag ──────────────────────────────
+    const [profileRows] = await db.execute(
+      `SELECT gpa, is_at_risk FROM student_profile WHERE user_id = ?`,
+      [userId]
+    );
+    const profile = profileRows[0] || { gpa: null, is_at_risk: false };
+
+    // ── 2. Enrolled courses with overall completion % ──────
+    const [courses] = await db.execute(
+      `SELECT e.enrollment_id, e.course_id, e.completion_percent, e.status AS enrollment_status,
+              c.title AS course_title,
+              u.username AS instructor_name
+       FROM enrollment e
+       JOIN course c ON e.course_id = c.course_id
+       JOIN user u ON c.instructor_id = u.user_id
+       WHERE e.user_id = ? AND e.status IN ('active','completed')
+       ORDER BY e.enrolled_at DESC`,
+      [userId]
+    );
+
+    // ── 3. Module progress per course ─────────────────────
+    for (const course of courses) {
+      const [modules] = await db.execute(
+        `SELECT m.module_id, m.title,
+                COALESCE(mp.status, 'not_started') AS status,
+                COALESCE(mp.completion_percentage, 0) AS completion_percentage,
+                mp.completed_at
+         FROM module m
+         LEFT JOIN module_progress mp ON mp.module_id = m.module_id AND mp.user_id = ?
+         WHERE m.course_id = ?
+         ORDER BY m.sort_order`,
+        [userId, course.course_id]
+      );
+      course.modules = modules;
+
+      // Recompute course-level completion from modules
+      const total = modules.length;
+      const done  = modules.filter(m => m.status === 'completed').length;
+      course.module_completion_percent = total > 0
+        ? parseFloat(((done / total) * 100).toFixed(2))
+        : 0;
+    }
+
+    // ── 4. Quiz performance summary ────────────────────────
+    const [quizStats] = await db.execute(
+      `SELECT q.course_id,
+              COUNT(DISTINCT qa.quiz_attempt_id)           AS attempts_count,
+              AVG(qa.score)                                AS avg_score,
+              MAX(qa.score)                                AS best_score
+       FROM quiz_attempt qa
+       JOIN quiz q ON qa.quiz_id = q.quiz_id
+       WHERE qa.user_id = ? AND qa.status IN ('graded','submitted')
+       GROUP BY q.course_id`,
+      [userId]
+    );
+    const quizMap = {};
+    for (const s of quizStats) quizMap[s.course_id] = s;
+
+    for (const course of courses) {
+      course.quiz_stats = quizMap[course.course_id] || {
+        attempts_count: 0, avg_score: null, best_score: null
+      };
+    }
+
+    // ── 5. Recommended next steps ──────────────────────────
+    // Find the first incomplete module across all active courses
+    const recommendations = [];
+    for (const course of courses) {
+      if (course.enrollment_status !== 'active') continue;
+      const nextModule = course.modules.find(m => m.status !== 'completed');
+      if (nextModule) {
+        recommendations.push({
+          course_id: course.course_id,
+          course_title: course.course_title,
+          next_module_id: nextModule.module_id,
+          next_module_title: nextModule.title,
+          message: `Continue "${nextModule.title}" in ${course.course_title}`
+        });
+      }
+
+      // Flag upcoming quizzes not yet attempted
+      const [upcoming] = await db.execute(
+        `SELECT q.quiz_id, q.title, q.due_date
+         FROM quiz q
+         WHERE q.course_id = ? AND q.status = 'published'
+           AND (q.due_date IS NULL OR q.due_date > NOW())
+           AND q.quiz_id NOT IN (
+               SELECT qa.quiz_id FROM quiz_attempt qa WHERE qa.user_id = ?
+           )
+         ORDER BY q.due_date ASC LIMIT 3`,
+        [course.course_id, userId]
+      );
+      for (const q of upcoming) {
+        recommendations.push({
+          course_id: course.course_id,
+          course_title: course.course_title,
+          quiz_id: q.quiz_id,
+          quiz_title: q.title,
+          due_date: q.due_date,
+          message: `Attempt quiz "${q.title}" in ${course.course_title}`
+        });
+      }
+    }
+
+    res.json({
+      gpa: profile.gpa,
+      is_at_risk: !!profile.is_at_risk,
+      courses,
+      recommendations: recommendations.slice(0, 5) // top 5
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// ─── GRADE DETAIL WITH FEEDBACK (UC8) ────────────────────
+// Returns full breakdown for one quiz attempt: each question, student answer,
+// correct answer, score awarded, per-question feedback, and instructor comments.
+exports.getGradeDetail = async (req, res) => {
+  const userId = req.user.user_id;
+  const { attemptId } = req.params;
+  try {
+    // Verify this attempt belongs to the requesting student
+    const [attemptRows] = await db.execute(
+      `SELECT qa.quiz_attempt_id, qa.quiz_id, qa.score, qa.status,
+              qa.start_time, qa.end_time,
+              q.title AS quiz_title, q.submission_type,
+              c.title AS course_title
+       FROM quiz_attempt qa
+       JOIN quiz q ON qa.quiz_id = q.quiz_id
+       JOIN course c ON q.course_id = c.course_id
+       WHERE qa.quiz_attempt_id = ? AND qa.user_id = ?`,
+      [attemptId, userId]
+    );
+    if (attemptRows.length === 0) {
+      return res.status(404).json({ message: 'Attempt not found' });
+    }
+    const attempt = attemptRows[0];
+
+    // Status-gating: don't reveal answers while still in_progress
+    if (attempt.status === 'in_progress') {
+      return res.status(400).json({ message: 'Quiz is still in progress' });
+    }
+
+    // Pending / ungraded — return high-level status only
+    if (attempt.status === 'submitted') {
+      return res.json({
+        attempt_id: attempt.quiz_attempt_id,
+        quiz_title: attempt.quiz_title,
+        course_title: attempt.course_title,
+        status: 'pending',
+        message: 'This submission is awaiting instructor review.',
+        score: null,
+        answers: []
+      });
+    }
+
+    // Graded — return full per-question breakdown
+    const [answers] = await db.execute(
+      `SELECT a.answer_id,
+              a.question_id,
+              q.question_text,
+              q.question_type,
+              q.options,
+              q.points                        AS max_points,
+              a.user_answer,
+              CASE WHEN q.question_type = 'short_answer' THEN NULL
+                   ELSE q.correct_answer END   AS correct_answer,
+              a.is_correct,
+              a.score_awarded,
+              a.feedback                       AS auto_feedback,
+              a.file_url,
+              u.username                       AS graded_by
+       FROM answer a
+       JOIN question q ON a.question_id = q.question_id
+       LEFT JOIN user u ON a.graded_by_user_id = u.user_id
+       WHERE a.quiz_attempt_id = ?
+       ORDER BY q.sort_order`,
+      [attemptId]
+    );
+
+    // Score-band overall feedback (if configured by instructor)
+    const [bandRows] = await db.execute(
+      `SELECT feedback_message FROM quiz_feedback
+       WHERE quiz_id = ? AND ? BETWEEN min_score AND max_score
+       ORDER BY min_score DESC LIMIT 1`,
+      [attempt.quiz_id, attempt.score || 0]
+    );
+
+    res.json({
+      attempt_id: attempt.quiz_attempt_id,
+      quiz_title: attempt.quiz_title,
+      course_title: attempt.course_title,
+      status: attempt.status,
+      score: attempt.score,
+      start_time: attempt.start_time,
+      end_time: attempt.end_time,
+      overall_feedback: bandRows.length > 0 ? bandRows[0].feedback_message : null,
+      answers
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
