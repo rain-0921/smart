@@ -1197,7 +1197,7 @@ The Activity Logs screen provides administrators with a system-wide audit trail 
 
 | Activity Diagram | Pseudocode |
 | --- | --- |
-|  | BEGIN AdminViewReports   DISPLAY available report types    INPUT selected report type AND time period   QUERY Database FOR relevant data    IF no data IS AVAILABLE THEN     DISPLAY "No data available for this report"     STOP   END IF    GENERATE AND DISPLAY report    IF admin CLICKS Save THEN     STORE report IN Database   END IF END AdminViewReports |
+|  | BEGIN AdminViewReports   DISPLAY available report types    INPUT selected report type AND time period   QUERY Database FOR relevant data    IF no data IS AVAILABLE THEN     DISPLAY "No data available for this report"     STOP   END IF    GENERATE AND DISPLAY report  END AdminViewReports |
 
 ### 7.3.5 Report Viewing Component
 

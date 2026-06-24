@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   adminGetUsers, adminAddUser, adminEditUser, adminDeactivateUser,
   adminGetCourses, adminAddCourse, adminEditCourse, adminArchiveCourse,
-  adminGetEnrollments, adminAddEnrollment, adminDropEnrollment,
-  adminGetReports, adminGetLogs
+  adminGetEnrollments, adminAddEnrollment, adminEditEnrollment, adminDropEnrollment,
+  adminGetReports, adminGetReportTypes, adminGetDashboard, adminGetLogs, adminGetLogFilters, adminGetLogUsers,
+  adminExportLogs, adminGetNotifications, adminCreateNotification,
+  adminEditNotification, adminDeleteNotification,
 } from '../services/api';
 
 /* ════════════════════════════════════════════════════════════
@@ -173,7 +175,8 @@ function StatCard({ label, value, accent = token.ink, icon }) {
   return (
     <div style={{
       background: token.surface, borderRadius: 10, padding: '16px 20px', minWidth: 150,
-      border: `1px solid ${token.line}`, borderLeft: `4px solid ${accent}`, flex: '1 1 150px',
+      borderTop: `1px solid ${token.line}`, borderRight: `1px solid ${token.line}`,
+      borderBottom: `1px solid ${token.line}`, borderLeft: `4px solid ${accent}`, flex: '1 1 150px',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: token.inkSoft }}>{label}</span>
@@ -202,23 +205,41 @@ export default function AdminDashboard() {
   const [loading, setLoading]     = useState({});
 
   // data
-  const [reports, setReports]     = useState(null);
+  const [dashboard, setDashboard]  = useState(null);
   const [users, setUsers]         = useState([]);
   const [courses, setCourses]     = useState([]);
   const [enrollments, setEnrollments] = useState([]);
-  const [logs, setLogs]           = useState([]);   // raw array from backend
+  const [logs, setLogs]           = useState([]);   // raw log entries
+  const [logUsers, setLogUsers]   = useState([]);  // user list (initial log view)
+  const [notifications, setNotifications] = useState([]);
+  const [reports, setReports]     = useState(null);
+  const [reportTypes, setReportTypes] = useState([]);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState('summary');
+  const [reportStart, setReportStart] = useState('');
+  const [reportEnd, setReportEnd]   = useState('');
 
   // modals
   const [showUserModal, setShowUserModal]         = useState(false);
   const [showCourseModal, setShowCourseModal]     = useState(false);
   const [showEnrollModal, setShowEnrollModal]     = useState(false);
+  const [showNotifModal, setShowNotifModal]       = useState(false);
+  const [showLogDetailModal, setShowLogDetailModal] = useState(false);
   const [editingUser, setEditingUser]             = useState(null);
   const [editingCourse, setEditingCourse]         = useState(null);
+  const [editingNotif, setEditingNotif]           = useState(null);
+  const [editingEnrollment, setEditingEnrollment]  = useState(null);
+  const [detailLogs, setDetailLogs]               = useState([]);
+
+  // log tab: 'user-list' (initial) or 'logs' (after filter applied)
+  const [logViewMode, setLogViewMode]            = useState('user-list');
 
   // forms
   const [userForm, setUserForm] = useState({ username: '', email: '', password: '', role: 'student', department: '', phone_number: '', status: 'active' });
   const [courseForm, setCourseForm] = useState({ title: '', description: '', instructor_id: '', status: 'draft' });
   const [enrollForm, setEnrollForm] = useState({ user_id: '', course_id: '' });
+  const [enrollEditForm, setEnrollEditForm] = useState({ user_id: '', course_id: '', status: 'active' });
+  const [notifForm, setNotifForm]   = useState({ title: '', message: '', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
 
   const showAlert = (msg, type = 'success') => {
     setAlert({ msg, type });
@@ -234,7 +255,7 @@ export default function AdminDashboard() {
 
   // ── fetch on tab change ──
   useEffect(() => {
-    if (tab === 'dashboard')   withLoading('dashboard',  async () => setReports((await adminGetReports()).data));
+    if (tab === 'dashboard')   withLoading('dashboard',  async () => setDashboard((await adminGetDashboard()).data));
     if (tab === 'users')       withLoading('users',      async () => setUsers((await adminGetUsers()).data));
     if (tab === 'courses')     withLoading('courses',    async () => setCourses((await adminGetCourses()).data));
     if (tab === 'enrollments') withLoading('enrollments', async () => {
@@ -242,10 +263,20 @@ export default function AdminDashboard() {
       setUsers((await adminGetUsers()).data);
       setCourses((await adminGetCourses()).data);
     });
+    if (tab === 'notifications') withLoading('notifications', async () => {
+      setNotifications((await adminGetNotifications()).data);
+      setUsers((await adminGetUsers()).data);
+      setCourses((await adminGetCourses()).data);
+    });
+    if (tab === 'reports')      withLoading('reports',     async () => {
+      const types = (await adminGetReportTypes()).data;
+      setReportTypes(types);
+    });
     if (tab === 'logs')        withLoading('logs',        async () => {
-      const res = await adminGetLogs();
-      // Backend wraps: { isEmpty, message, data }
-      setLogs(res.data?.data ?? res.data ?? []);
+      setLogViewMode('user-list');
+      setLogs([]);
+      const res = await adminGetLogUsers();
+      setLogUsers(res.data?.data ?? []);
     });
   }, [tab]);
 
@@ -310,8 +341,149 @@ export default function AdminDashboard() {
     try { await adminDropEnrollment(id); showAlert('Enrollment dropped'); adminGetEnrollments().then(r => setEnrollments(r.data)); }
     catch { showAlert('Failed', 'error'); }
   };
+  const openEditEnrollment = (e) => {
+    setEditingEnrollment(e);
+    setEnrollEditForm({ user_id: e.user_id, course_id: e.course_id, status: e.status });
+    setShowEnrollModal(true);
+  };
+  const saveEnrollmentEdit = async () => {
+    try {
+      await adminEditEnrollment(editingEnrollment.enrollment_id, enrollEditForm);
+      showAlert('Enrollment updated');
+      setShowEnrollModal(false);
+      adminGetEnrollments().then(r => setEnrollments(r.data));
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
 
-  const instructors = users.filter(u => u.role === 'instructor');
+  // ── NOTIFICATIONS ──
+  const openAddNotif = () => {
+    setEditingNotif(null);
+    setNotifForm({ title: '', message: '', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
+    setShowNotifModal(true);
+  };
+  const openEditNotif = (n) => {
+    setEditingNotif(n);
+    const mode = n.course_id ? 'course' : n.user_id ? 'user' : n.target_role ? 'role' : 'all';
+    setNotifForm({
+      title: n.title, message: n.message,
+      target_mode: mode,
+      target_role: n.target_role || 'student',
+      user_id: n.user_id || '',
+      course_id: n.course_id || '',
+      target_all: mode === 'all',
+      scheduled_at: n.scheduled_at ? n.scheduled_at.slice(0, 16) : '',
+    });
+    setShowNotifModal(true);
+  };
+  const saveNotif = async () => {
+    if (!notifForm.title.trim() || !notifForm.message.trim()) {
+      showAlert('Title and message are required', 'error');
+      return;
+    }
+    const payload = { title: notifForm.title, message: notifForm.message };
+    if (notifForm.target_mode === 'user')      payload.user_id     = notifForm.user_id;
+    if (notifForm.target_mode === 'role')      payload.target_role = notifForm.target_role;
+    if (notifForm.target_mode === 'all')       payload.target_all   = true;
+    if (notifForm.target_mode === 'course')    payload.course_id   = notifForm.course_id;
+    if (notifForm.scheduled_at) payload.scheduled_at = notifForm.scheduled_at;
+    try {
+      if (editingNotif) { await adminEditNotification(editingNotif.notification_id, payload); showAlert('Notification updated'); }
+      else              { await adminCreateNotification(payload); showAlert('Notification created'); }
+      setShowNotifModal(false);
+      adminGetNotifications().then(r => setNotifications(r.data));
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
+  const deleteNotif = async (id) => {
+    if (!window.confirm('Delete this notification?')) return;
+    try { await adminDeleteNotification(id); showAlert('Notification deleted'); adminGetNotifications().then(r => setNotifications(r.data)); }
+    catch { showAlert('Failed', 'error'); }
+  };
+
+  // ── ACTIVITY LOG FILTERS ──
+  const [logFilterRole, setLogFilterRole]         = useState('');
+  const [logFilterType, setLogFilterType]         = useState('');
+  const [logFilterStart, setLogFilterStart]       = useState('');
+  const [logFilterEnd, setLogFilterEnd]           = useState('');
+  const [logFilterUsers, setLogFilterUsers]       = useState([]);
+  const [logActivityTypes, setLogActivityTypes]   = useState([]);
+  const [filterLoading, setFilterLoading]         = useState(false);
+
+  // fetch filter options once on mount
+  useEffect(() => {
+    adminGetLogFilters().then(r => {
+      setLogFilterUsers(r.data?.roles || []);
+      setLogActivityTypes(r.data?.activityTypes || []);
+    }).catch(() => {});
+  }, []);
+
+  const applyLogFilters = useCallback(async () => {
+    setFilterLoading(true);
+    try {
+      const params = {};
+      if (logFilterRole)   params.role          = logFilterRole;
+      if (logFilterType)  params.activityType  = logFilterType;
+      if (logFilterStart) params.startDate     = logFilterStart;
+      if (logFilterEnd)   params.endDate       = logFilterEnd;
+      const res = await adminGetLogs(params);
+      setLogs(res.data?.data ?? res.data ?? []);
+      setLogViewMode('logs');
+    } catch { showAlert('Failed to load logs', 'error'); }
+    finally { setFilterLoading(false); }
+  }, [logFilterRole, logFilterType, logFilterStart, logFilterEnd]);
+
+  const exportLogs = async () => {
+    const params = {};
+    if (logFilterRole)   params.role         = logFilterRole;
+    if (logFilterType)  params.activityType = logFilterType;
+    if (logFilterStart) params.startDate     = logFilterStart;
+    if (logFilterEnd)   params.endDate      = logFilterEnd;
+    try {
+      const res = await adminExportLogs(params);
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `activity_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Failed to export logs', 'error');
+    }
+  };
+
+  const openLogDetail = async (userId, username) => {
+    setShowLogDetailModal(true);
+    try {
+      const res = await adminGetLogs({ userId });
+      setDetailLogs(res.data?.data ?? res.data ?? []);
+    } catch { setDetailLogs([]); }
+  };
+
+  const runReport = useCallback(async () => {
+    setReportLoading(true);
+    try {
+      const params = { type: selectedReportType };
+      if (reportStart) params.startDate = reportStart;
+      if (reportEnd)   params.endDate   = reportEnd;
+      const res = await adminGetReports(params);
+      setReports(res.data);
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed to load report', 'error'); }
+    finally { setReportLoading(false); }
+  }, [selectedReportType, reportStart, reportEnd]);
+
+  const resetLogFilters = () => {
+    setLogFilterRole('');
+    setLogFilterType('');
+    setLogFilterStart('');
+    setLogFilterEnd('');
+    setLogViewMode('user-list');
+    setLogs([]);
+    adminGetLogUsers().then(r => setLogUsers(r.data?.data ?? []));
+  };
+
+  const instructors = users.filter(u => u.role === 'instructor' && u.status === 'active');
   const students     = users.filter(u => u.role === 'student');
 
   /* ═══════════════════════════════════════════════════════════ */
@@ -335,11 +507,13 @@ export default function AdminDashboard() {
           </div>
 
           {[
-            { key: 'dashboard',    label: 'Dashboard',     icon: 'home' },
-            { key: 'users',        label: 'Users',         icon: 'people' },
-            { key: 'courses',      label: 'Courses',       icon: 'doc' },
-            { key: 'enrollments',  label: 'Enrollments',   icon: 'clipboard' },
-            { key: 'logs',         label: 'Activity Logs', icon: 'trend' },
+            { key: 'dashboard',    label: 'Dashboard',       icon: 'home' },
+            { key: 'users',        label: 'Users',           icon: 'people' },
+            { key: 'courses',      label: 'Courses',         icon: 'doc' },
+            { key: 'enrollments', label: 'Enrollments',     icon: 'clipboard' },
+            { key: 'notifications',label: 'Notifications',   icon: 'bell' },
+            { key: 'reports',      label: 'Reports',         icon: 'trend' },
+            { key: 'logs',         label: 'Activity Logs',   icon: 'clipboard' },
           ].map(item => (
             <div key={item.key} onClick={() => setTab(item.key)}
               className={`adm-nav-item${tab === item.key ? ' active' : ''}`}
@@ -379,22 +553,22 @@ export default function AdminDashboard() {
           {/* ── DASHBOARD ── */}
           {tab === 'dashboard' && (
             loading.dashboard ? <Loading />
-              : reports && (
+              : dashboard && (
                 <div className="adm-card">
                   <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 28 }}>
-                    <StatCard label="Total Users"      value={reports.totalUsers}      accent={token.ink}     icon="people" />
-                    <StatCard label="Total Courses"    value={reports.totalCourses}    accent={token.indigo}  icon="doc" />
-                    <StatCard label="Total Enrollments" value={reports.totalEnrollments} accent={token.good}  icon="clipboard" />
-                    <StatCard label="Active Students"  value={reports.activeStudents}  accent={token.brass}   icon="spark" />
+                    <StatCard label="Total Users"       value={dashboard.stats?.totalUsers || 0}       accent={token.ink}     icon="people" />
+                    <StatCard label="Total Courses"     value={dashboard.stats?.totalCourses || 0}   accent={token.indigo}  icon="doc" />
+                    <StatCard label="Total Enrollments" value={dashboard.stats?.totalEnrollments || 0} accent={token.good}  icon="clipboard" />
+                    <StatCard label="Active Students"   value={dashboard.stats?.activeStudents || 0} accent={token.brass}   icon="spark" />
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
                     <div style={card}>
                       <h3 style={cardTitle}><Icon name="doc" size={15} color={token.indigo} /> Top Courses by Enrollment</h3>
-                      {(reports.courseStats && reports.courseStats.length > 0)
+                      {(dashboard.topCourses && dashboard.topCourses.length > 0)
                         ? <div className="adm-table-wrap"><table style={table}>
                             <thead><tr>{['Course Title', 'Enrollments'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-                            <tbody>{reports.courseStats.map((c, i) => (
+                            <tbody>{dashboard.topCourses.map((c, i) => (
                               <tr key={i} className="adm-table-row">
                                 <td style={{ ...td, fontWeight: 600, color: token.ink }}>{c.title}</td>
                                 <td style={{ ...td, fontFamily: fontMono, fontWeight: 600 }}>{c.enrollments}</td>
@@ -406,8 +580,28 @@ export default function AdminDashboard() {
                     </div>
 
                     <div style={card}>
-                      <h3 style={cardTitle}><Icon name="bell" size={15} color={token.brass} /> Recent Activity</h3>
-                      <Empty>Activity log feed coming soon — check the Activity Logs tab for full history.</Empty>
+                      <h3 style={cardTitle}><Icon name="bell" size={15} color={token.brass} /> Recent Platform Activity</h3>
+                      {(dashboard.recentActivity && dashboard.recentActivity.length > 0)
+                        ? <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {dashboard.recentActivity.map((a, i) => (
+                              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                <Avatar name={a.username} size={28} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 600, color: token.ink }}>
+                                    {a.username} <span style={{ fontWeight: 400, color: token.inkSoft }}>({a.role})</span>
+                                  </div>
+                                  <div style={{ fontSize: 12.5, color: token.inkSoft, marginTop: 1 }}>
+                                    {a.description || a.activity_type}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: token.inkFaint, fontFamily: fontMono, marginTop: 2 }}>
+                                    {new Date(a.created_at).toLocaleString()}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        : <Empty>No recent activity recorded.</Empty>
+                      }
                     </div>
                   </div>
                 </div>
@@ -494,6 +688,7 @@ export default function AdminDashboard() {
                         <td style={td}><span style={statusBadge(e.status)}>{e.status}</span></td>
                         <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(e.enrolled_at).toLocaleDateString()}</td>
                         <td style={td}>
+                          <button className="adm-row-btn" style={btnSmall} onClick={() => openEditEnrollment(e)}>Edit</button>
                           {e.status === 'active' &&
                             <button className="adm-row-btn" style={{ ...btnSmall, background: token.danger, color: '#fff' }} onClick={() => dropEnrollment(e.enrollment_id)}>Drop</button>
                           }
@@ -505,26 +700,236 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* ── ACTIVITY LOGS ── */}
-          {tab === 'logs' && (
+          {/* ── NOTIFICATIONS ── */}
+          {tab === 'notifications' && (
             <div style={card} className="adm-card">
-              <h3 style={cardTitle}><Icon name="trend" size={15} /> User Activity Logs</h3>
-              {loading.logs ? <Loading />
-                : logs.length === 0
-                  ? <Empty>No activity records found.</Empty>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 8 }}>
+                <h3 style={{ ...cardTitle, margin: 0 }}>System Notifications</h3>
+                <button className="adm-btn" style={btnPrimary} onClick={openAddNotif}>+ Create Notification</button>
+              </div>
+              {loading.notifications ? <Loading />
+                : notifications.length === 0
+                  ? <Empty>No notifications found.</Empty>
                   : <div className="adm-table-wrap"><table style={table}>
-                      <thead><tr>{['User', 'Role', 'Activity', 'Description', 'Date'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
-                      <tbody>{logs.map(l => (
-                        <tr key={l.activity_log_id} className="adm-table-row">
-                          <td style={{ ...td, fontWeight: 600, color: token.ink }}>{l.username}</td>
-                          <td style={td}><span style={roleBadge(l.role)}>{l.role}</span></td>
-                          <td style={td}>{l.activity_type}</td>
-                          <td style={td}>{l.description}</td>
-                          <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(l.created_at).toLocaleString()}</td>
+                      <thead><tr>{['Title', 'Message', 'Target', 'Delivery', 'Created', 'Actions'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                      <tbody>{notifications.map(n => (
+                        <tr key={n.notification_id} className="adm-table-row">
+                          <td style={{ ...td, fontWeight: 600, color: token.ink }}>{n.title}</td>
+                          <td style={{ ...td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</td>
+                          <td style={td}>
+                            {n.recipient_name
+                              ? <span style={roleBadge('student')}>{n.recipient_name}</span>
+                              : n.target_role
+                                ? <span style={roleBadge(n.target_role)}>{n.target_role}</span>
+                                : <span style={{ color: token.inkFaint, fontSize: 12 }}>All users</span>
+                            }
+                          </td>
+                          <td style={td}>
+                            <span style={statusBadge(n.delivery_status === 'sent' ? 'active' : n.delivery_status === 'scheduled' ? 'draft' : 'inactive')}>
+                              {n.delivery_status}
+                            </span>
+                            {n.scheduled_at && <span style={{ display:'block', fontSize:11, color: token.inkFaint, marginTop:2 }}>
+                              {new Date(n.scheduled_at).toLocaleString()}
+                            </span>}
+                          </td>
+                          <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(n.created_at).toLocaleDateString()}</td>
+                          <td style={td}>
+                            {(n.delivery_status === 'scheduled' || n.delivery_status === 'draft') && !n.recipient_name && (
+                              <button className="adm-row-btn" style={btnSmall} onClick={() => openEditNotif(n)}>Edit</button>
+                            )}
+                            <button className="adm-row-btn" style={{ ...btnSmall, background: token.danger, color: '#fff' }} onClick={() => deleteNotif(n.notification_id)}>Delete</button>
+                          </td>
                         </tr>
                       ))}</tbody>
                     </table></div>
               }
+            </div>
+          )}
+
+          {/* ── REPORTS ── */}
+          {tab === 'reports' && (
+            <div style={card} className="adm-card">
+              <h3 style={cardTitle}><Icon name="doc" size={15} /> Platform Reports</h3>
+
+              {/* Controls */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18, alignItems: 'flex-end' }}>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>Report Type</label>
+                  <select className="adm-input" style={{ ...formInput, width: 200 }} value={selectedReportType}
+                    onChange={e => { setSelectedReportType(e.target.value); setReports(null); }}>
+                    {reportTypes.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>From</label>
+                  <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={reportStart}
+                    onChange={e => setReportStart(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>To</label>
+                  <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={reportEnd}
+                    onChange={e => setReportEnd(e.target.value)} />
+                </div>
+                <button className="adm-btn" style={{ background: token.indigo, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={runReport} disabled={reportLoading}>
+                  {reportLoading ? 'Loading…' : 'Generate Report'}
+                </button>
+              </div>
+
+              {/* Results */}
+              {!reports ? (
+                <Empty>Select a report type and click "Generate Report" to view data.</Empty>
+              ) : reports.isEmpty ? (
+                <Empty>No data available for this report in the selected period.</Empty>
+              ) : (
+                <div>
+                  {/* Summary row */}
+                  {reports.summary && (
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
+                      {Object.entries(reports.summary).map(([k, v]) => {
+                        if (typeof v === 'object') return null;
+                        return (
+                          <div key={k} style={{ background: token.paper, border: `1px solid ${token.line}`, borderRadius: 8, padding: '12px 16px', minWidth: 110, flex: 1 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: token.inkSoft, marginBottom: 4 }}>{k.replace(/_/g, ' ')}</div>
+                            <div style={{ fontFamily: fontMono, fontSize: 22, fontWeight: 600, color: token.ink }}>{String(v)}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Enrollment status breakdown */}
+                  {reports.summary?.byStatus && (
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: token.inkSoft, marginBottom: 8 }}>Status Breakdown</div>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        {Object.entries(reports.summary.byStatus).map(([s, cnt]) => (
+                          <span key={s} style={{ ...statusBadge(s), padding: '4px 14px', fontSize: 13 }}>{s}: {cnt}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Role breakdown */}
+                  {reports.summary?.byRole && (
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: token.inkSoft, marginBottom: 8 }}>By Role</div>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        {Object.entries(reports.summary.byRole).map(([r, cnt]) => (
+                          <span key={r} style={{ ...roleBadge(r), padding: '4px 14px', fontSize: 13 }}>{r}: {cnt}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Data table */}
+                  {reports.data && reports.data.length > 0 && (
+                    <div className="adm-table-wrap">
+                      <table style={table}>
+                        <thead>
+                          <tr>{Object.keys(reports.data[0]).filter(k => k !== 'course_id').map(h => (
+                            <th key={h} style={th}>{h.replace(/_/g, ' ')}</th>
+                          ))}</tr>
+                        </thead>
+                        <tbody>
+                          {reports.data.map((row, i) => (
+                            <tr key={i} className="adm-table-row">
+                              {Object.entries(row).filter(([k]) => k !== 'course_id').map(([k, v]) => (
+                                <td key={k} style={{ ...td, fontFamily: k === 'enrolled_at' || k === 'created_at' ? fontMono : undefined, fontSize: k === 'enrolled_at' || k === 'created_at' ? 12 : 13.5 }}>
+                                  {k === 'enrolled_at' || k === 'created_at'
+                                    ? (v ? new Date(v).toLocaleDateString() : '—')
+                                    : (v ?? '—')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── ACTIVITY LOGS ── */}
+          {tab === 'logs' && (
+            <div style={card} className="adm-card">
+              <h3 style={cardTitle}><Icon name="clipboard" size={15} /> User Activity Logs</h3>
+
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18, alignItems: 'flex-end' }}>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>Role</label>
+                  <select className="adm-input" style={{ ...formInput, width: 130 }} value={logFilterRole}
+                    onChange={e => setLogFilterRole(e.target.value)}>
+                    <option value="">All roles</option>
+                    {logFilterUsers.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>Activity Type</label>
+                  <select className="adm-input" style={{ ...formInput, width: 160 }} value={logFilterType}
+                    onChange={e => setLogFilterType(e.target.value)}>
+                    <option value="">All types</option>
+                    {logActivityTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>From</label>
+                  <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={logFilterStart}
+                    onChange={e => setLogFilterStart(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ ...formLabel, marginBottom: 3 }}>To</label>
+                  <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={logFilterEnd}
+                    onChange={e => setLogFilterEnd(e.target.value)} />
+                </div>
+                <button className="adm-btn" style={{ background: token.indigo, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={applyLogFilters}>Filter</button>
+                {logViewMode === 'logs' && (
+                  <button className="adm-btn" style={{ background: token.warn, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={resetLogFilters}>Reset</button>
+                )}
+                <button className="adm-btn" style={{ background: token.brass, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={exportLogs}>Export CSV</button>
+              </div>
+
+              {/* User list — initial view */}
+              {logViewMode === 'user-list' && (
+                filterLoading ? <Loading />
+                  : logUsers.length === 0
+                    ? <Empty>No activity records found.</Empty>
+                    : <div className="adm-table-wrap"><table style={table}>
+                        <thead><tr>{['User', 'Role', 'Last Activity', 'Description', 'Last Active'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                        <tbody>{logUsers.map(u => (
+                          <tr key={u.user_id} className="adm-table-row">
+                            <td style={{ ...td, fontWeight: 600, color: token.ink, cursor: 'pointer', textDecoration: 'underline' }}
+                              onClick={() => openLogDetail(u.user_id, u.username)}>{u.username}</td>
+                            <td style={td}><span style={roleBadge(u.role)}>{u.role}</span></td>
+                            <td style={td}>{u.last_activity_type || '—'}</td>
+                            <td style={td}>{u.last_description || '—'}</td>
+                            <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{u.last_activity_at ? new Date(u.last_activity_at).toLocaleString() : '—'}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table></div>
+              )}
+
+              {/* Filtered log entries */}
+              {logViewMode === 'logs' && (
+                filterLoading ? <Loading />
+                  : logs.length === 0
+                    ? <Empty>No records found for the selected filters.</Empty>
+                    : <div className="adm-table-wrap"><table style={table}>
+                        <thead><tr>{['User', 'Role', 'Activity', 'Description', 'Date'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                        <tbody>{logs.map(l => (
+                          <tr key={l.activity_log_id} className="adm-table-row">
+                            <td style={{ ...td, fontWeight: 600, color: token.ink, cursor: 'pointer', textDecoration: 'underline' }}
+                              onClick={() => openLogDetail(l.user_id, l.username)}>{l.username}</td>
+                            <td style={td}><span style={roleBadge(l.role)}>{l.role}</span></td>
+                            <td style={td}>{l.activity_type}</td>
+                            <td style={td}>{l.description}</td>
+                            <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(l.created_at).toLocaleString()}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table></div>
+              )}
             </div>
           )}
         </div>
@@ -601,30 +1006,148 @@ export default function AdminDashboard() {
           </Modal>
         )}
 
-        {/* ── ENROLLMENT MODAL ── */}
+        {/* ── ENROLLMENT MODAL (Add + Edit) ── */}
         {showEnrollModal && (
-          <Modal title="Add Enrollment" onClose={() => setShowEnrollModal(false)}>
+          <Modal title={editingEnrollment ? 'Edit Enrollment' : 'Add Enrollment'} onClose={() => { setShowEnrollModal(false); setEditingEnrollment(null); setEnrollEditForm({ user_id: '', course_id: '', status: 'active' }); }}>
+            {editingEnrollment ? (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>Student</label>
+                  <select className="adm-input" style={formInput} value={enrollEditForm.user_id}
+                    onChange={e => setEnrollEditForm({ ...enrollEditForm, user_id: e.target.value })} disabled>
+                    <option value="">-- Select Student --</option>
+                    {students.map(s => <option key={s.user_id} value={s.user_id}>{s.username} ({s.email})</option>)}
+                  </select>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>Course</label>
+                  <select className="adm-input" style={formInput} value={enrollEditForm.course_id}
+                    onChange={e => setEnrollEditForm({ ...enrollEditForm, course_id: e.target.value })}>
+                    <option value="">-- Select Course --</option>
+                    {courses.filter(c => c.status === 'published').map(c =>
+                      <option key={c.course_id} value={c.course_id}>{c.title}</option>
+                    )}
+                  </select>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>Status</label>
+                  <select className="adm-input" style={formInput} value={enrollEditForm.status}
+                    onChange={e => setEnrollEditForm({ ...enrollEditForm, status: e.target.value })}>
+                    {['active', 'completed', 'dropped'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <button className="adm-btn" style={{ ...btnPrimary, width: '100%' }} onClick={saveEnrollmentEdit}>
+                  Update Enrollment
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>Student</label>
+                  <select className="adm-input" style={formInput} value={enrollForm.user_id}
+                    onChange={e => setEnrollForm({ ...enrollForm, user_id: e.target.value })}>
+                    <option value="">-- Select Student --</option>
+                    {students.map(s => <option key={s.user_id} value={s.user_id}>{s.username} ({s.email})</option>)}
+                  </select>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={formLabel}>Course</label>
+                  <select className="adm-input" style={formInput} value={enrollForm.course_id}
+                    onChange={e => setEnrollForm({ ...enrollForm, course_id: e.target.value })}>
+                    <option value="">-- Select Course --</option>
+                    {courses.filter(c => c.status === 'published').map(c =>
+                      <option key={c.course_id} value={c.course_id}>{c.title}</option>
+                    )}
+                  </select>
+                </div>
+                <button className="adm-btn" style={{ ...btnPrimary, width: '100%' }} onClick={saveEnrollment}>
+                  Add Enrollment
+                </button>
+              </>
+            )}
+          </Modal>
+        )}
+
+        {/* ── NOTIFICATION MODAL ── */}
+        {showNotifModal && (
+          <Modal title={editingNotif ? 'Edit Notification' : 'Create Notification'} wide onClose={() => setShowNotifModal(false)}>
             <div style={{ marginBottom: 12 }}>
-              <label style={formLabel}>Student</label>
-              <select className="adm-input" style={formInput} value={enrollForm.user_id}
-                onChange={e => setEnrollForm({ ...enrollForm, user_id: e.target.value })}>
-                <option value="">-- Select Student --</option>
-                {students.map(s => <option key={s.user_id} value={s.user_id}>{s.username} ({s.email})</option>)}
-              </select>
+              <label style={formLabel}>Title *</label>
+              <input className="adm-input" style={formInput} value={notifForm.title}
+                onChange={e => setNotifForm({ ...notifForm, title: e.target.value })} placeholder="e.g. New Course Available" />
             </div>
             <div style={{ marginBottom: 12 }}>
-              <label style={formLabel}>Course</label>
-              <select className="adm-input" style={formInput} value={enrollForm.course_id}
-                onChange={e => setEnrollForm({ ...enrollForm, course_id: e.target.value })}>
-                <option value="">-- Select Course --</option>
-                {courses.filter(c => c.status === 'published').map(c =>
-                  <option key={c.course_id} value={c.course_id}>{c.title}</option>
-                )}
+              <label style={formLabel}>Message *</label>
+              <textarea className="adm-input" style={{ ...formInput, height: 80 }} value={notifForm.message}
+                onChange={e => setNotifForm({ ...notifForm, message: e.target.value })} placeholder="Write your notification message here..." />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={formLabel}>Target Audience</label>
+              <select className="adm-input" style={formInput} value={notifForm.target_mode}
+                onChange={e => setNotifForm({ ...notifForm, target_mode: e.target.value })}>
+                <option value="role">By Role</option>
+                <option value="course">By Course</option>
+                <option value="user">Specific User</option>
+                <option value="all">All Users</option>
               </select>
             </div>
-            <button className="adm-btn" style={{ ...btnPrimary, width: '100%' }} onClick={saveEnrollment}>
-              Add Enrollment
+            {notifForm.target_mode === 'role' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={formLabel}>Role</label>
+                <select className="adm-input" style={formInput} value={notifForm.target_role}
+                  onChange={e => setNotifForm({ ...notifForm, target_role: e.target.value })}>
+                  {['student', 'instructor', 'advisor', 'admin'].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            )}
+            {notifForm.target_mode === 'course' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={formLabel}>Course</label>
+                <select className="adm-input" style={formInput} value={notifForm.course_id}
+                  onChange={e => setNotifForm({ ...notifForm, course_id: e.target.value })}>
+                  <option value="">-- Select Course --</option>
+                  {courses.map(c => <option key={c.course_id} value={c.course_id}>{c.title}</option>)}
+                </select>
+              </div>
+            )}
+            {notifForm.target_mode === 'user' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={formLabel}>User</label>
+                <select className="adm-input" style={formInput} value={notifForm.user_id}
+                  onChange={e => setNotifForm({ ...notifForm, user_id: e.target.value })}>
+                  <option value="">-- Select User --</option>
+                  {users.map(u => <option key={u.user_id} value={u.user_id}>{u.username} ({u.role})</option>)}
+                </select>
+              </div>
+            )}
+            <div style={{ marginBottom: 12 }}>
+              <label style={formLabel}>Delivery Time</label>
+              <input className="adm-input" style={formInput} type="datetime-local" value={notifForm.scheduled_at}
+                onChange={e => setNotifForm({ ...notifForm, scheduled_at: e.target.value })} />
+              <span style={{ fontSize: 11.5, color: token.inkFaint, marginTop: 4, display: 'block' }}>Leave empty to send immediately.</span>
+            </div>
+            <button className="adm-btn" style={{ ...btnPrimary, width: '100%' }} onClick={saveNotif}>
+              {editingNotif ? 'Update Notification' : 'Send Notification'}
             </button>
+          </Modal>
+        )}
+
+        {/* ── LOG DETAIL MODAL ── */}
+        {showLogDetailModal && (
+          <Modal title={`Activity History — ${detailLogs[0]?.username || ''}`} wide onClose={() => setShowLogDetailModal(false)}>
+            {detailLogs.length === 0 ? <Empty>No records found.</Empty>
+              : <div className="adm-table-wrap"><table style={table}>
+                  <thead><tr>{['Activity', 'Description', 'Related Item', 'Date'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                  <tbody>{detailLogs.map((l, i) => (
+                    <tr key={i} className="adm-table-row">
+                      <td style={{ ...td, fontWeight: 600 }}>{l.activity_type}</td>
+                      <td style={td}>{l.description}</td>
+                      <td style={td}>{l.related_item_type ? <span style={{ fontSize: 12, color: token.inkFaint }}>{l.related_item_type} #{l.related_item_id}</span> : '—'}</td>
+                      <td style={{ ...td, fontFamily: fontMono, fontSize: 12 }}>{new Date(l.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+            }
           </Modal>
         )}
       </div>
@@ -637,11 +1160,11 @@ export default function AdminDashboard() {
    ════════════════════════════════════════════════════════════ */
 const tabEyebrow = (t) => ({
   dashboard: 'Overview', users: 'Management', courses: 'Catalogue',
-  enrollments: 'Registrations', logs: 'Audit',
+  enrollments: 'Registrations', notifications: 'Communication', reports: 'Analytics', logs: 'Audit',
 }[t] || '');
 const tabTitle = (t) => ({
   dashboard: 'Dashboard', users: 'Users', courses: 'Courses',
-  enrollments: 'Student Enrollments', logs: 'Activity Logs',
+  enrollments: 'Student Enrollments', notifications: 'Notifications', reports: 'Reports', logs: 'Activity Logs',
 }[t] || '');
 
 const navItem    = { padding: '10px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 10 };
