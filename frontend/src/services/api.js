@@ -66,9 +66,14 @@ export const studentSubmitAssignment= (quizId, formData) =>
 export const studentGetGrades       = (courseId)   => API.get(`/student/courses/${courseId}/grades`);
 export const studentGetNotifications= ()           => API.get('/student/notifications');
 export const studentMarkRead        = (id)         => API.patch(`/student/notifications/${id}/read`);
+<<<<<<< HEAD
 export const studentGetProgress    = ()           => API.get('/student/progress');
 export const studentGetGradeDetail = (attemptId)  => API.get(`/student/attempts/${attemptId}/detail`);
 export const studentLogActivity    = (data)       => API.post('/student/log-activity', data);
+=======
+export const studentGetProgress     = ()           => API.get('/student/progress');
+export const studentGetGradeDetail  = (attemptId)  => API.get(`/student/attempts/${attemptId}/detail`);
+>>>>>>> fd0fc6c (sianng)
 // Instructor
 export const instrGetDashboard      = ()             => API.get('/instructor/dashboard');
 export const instrGetProfile        = ()             => API.get('/instructor/profile');

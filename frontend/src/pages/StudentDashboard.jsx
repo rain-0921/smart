@@ -5,9 +5,17 @@ import {
   studentGetCourses, studentEnroll, studentGetModules, studentCompleteLesson,
   studentGetQuizzes, studentStartQuiz, studentSubmitQuiz,
   studentGetAssignment, studentSubmitAssignment,
+<<<<<<< HEAD
   studentGetGrades, studentGetGradeDetail, studentGetProgress,
   studentGetNotifications, studentMarkRead, studentLogActivity
+=======
+  studentGetGrades, studentGetNotifications, studentMarkRead,
+  studentGetProgress, studentGetGradeDetail   // ← add these two to api.js
+>>>>>>> fd0fc6c (sianng)
 } from '../services/api';
+// api.js additions needed:
+// export const studentGetProgress = () => api.get('/students/progress');
+// export const studentGetGradeDetail = (attemptId) => api.get(`/students/attempts/${attemptId}/detail`);
 
 const token = {
   paper: '#F6F4EE',
@@ -264,6 +272,17 @@ export default function StudentDashboard() {
   const [profileForm, setProfileForm] = useState({});
   const [showProfileModal, setShowProfileModal] = useState(false);
 
+  // progress & recommendations
+  const [progress, setProgress] = useState(null);
+
+  // grade detail modal
+  const [gradeDetail, setGradeDetail] = useState(null);
+  const [gradeDetailLoading, setGradeDetailLoading] = useState(false);
+  const [showGradeDetailModal, setShowGradeDetailModal] = useState(false);
+
+  // notification filter
+  const [notifFilter, setNotifFilter] = useState('all');
+
   const showAlert = (msg, type = 'success') => {
     setAlert({ msg, type });
     setTimeout(() => setAlert({ msg: '', type: '' }), 3000);
@@ -317,6 +336,7 @@ export default function StudentDashboard() {
     if (tab === 'dashboard') {
       studentGetDashboard().then(r => setDashboard(r.data)).catch(() => {});
       studentGetNotifications().then(r => setNotifications(r.data)).catch(() => {});
+      studentGetProgress().then(r => setProgress(r.data)).catch(() => {});
     }
     if (tab === 'courses')
       studentGetCourses().then(r => setCatalogue(r.data)).catch(() => {});
@@ -458,6 +478,22 @@ export default function StudentDashboard() {
 
 
   const [profileLoading, setProfileLoading] = useState(false);
+
+  // ── Grade Detail ──
+  const handleViewGradeDetail = async (attemptId) => {
+    setGradeDetailLoading(true);
+    setGradeDetail(null);
+    setShowGradeDetailModal(true);
+    try {
+      const res = await studentGetGradeDetail(attemptId);
+      setGradeDetail(res.data);
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Failed to load grade detail', 'error');
+      setShowGradeDetailModal(false);
+    } finally {
+      setGradeDetailLoading(false);
+    }
+  };
   const [profileData, setProfileData] = useState(null);
 
   // ── Profile ──
@@ -672,11 +708,19 @@ export default function StudentDashboard() {
                   trend={{ type: deadlinesCount > 0 ? 'down' : 'up', text: deadlinesCount > 0 ? 'Due soon' : 'All clear' }}
                 />
                 <StatCard
+<<<<<<< HEAD
                   label="GPA"
                   value={gpa}
                   icon="🎓"
                   tone={atRisk ? 'orange' : 'purple'}
                   trend={{ type: atRisk ? 'down' : 'up', text: atRisk ? '⚠ At-risk student' : 'Keep it up!' }}
+=======
+                  label="Current GPA"
+                  value={gpa}
+                  icon="★"
+                  tone={atRisk ? 'orange' : 'purple'}
+                  trend={{ type: atRisk ? 'down' : 'up', text: atRisk ? '⚠ At Risk — seek advisor' : 'Good Standing' }}
+>>>>>>> fd0fc6c (sianng)
                 />
               </div>
               {atRisk && (
@@ -688,6 +732,31 @@ export default function StudentDashboard() {
 
               <div style={gridTwoOne}>
                 <div>
+                  {/* ── Recommended Next Steps ── */}
+                  {progress?.recommendations?.length > 0 && (
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={sectionTitle}>Recommended Next Steps</div>
+                      <div style={card}>
+                        {progress.recommendations.map((rec, i) => (
+                          <div key={i} style={quizItem}>
+                            <div style={{ ...quizIcon, background: rec.quiz_id ? 'rgba(249,115,22,0.12)' : 'rgba(108,143,255,0.12)' }}>
+                              {rec.quiz_id ? '✎' : '▶'}
+                            </div>
+                            <div style={quizInfo}>
+                              <div style={quizName}>{rec.message}</div>
+                              <div style={quizMeta}>{rec.course_title}</div>
+                            </div>
+                            {rec.due_date && (
+                              <span style={{ ...quizStatus, ...statusPill('due') }}>
+                                Due {new Date(rec.due_date).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={sectionTitle}>Continue Learning</div>
                   {dashboard.enrollments.length === 0 ? (
                     <Empty>No courses yet. Browse the catalogue!</Empty>
@@ -766,6 +835,7 @@ export default function StudentDashboard() {
                     {dashboard.quizScores.length === 0 ? (
                       <div style={emptyState}>No quiz scores yet.</div>
                     ) : (
+<<<<<<< HEAD
                       <table style={table}>
                         <thead>
                           <tr>
@@ -785,10 +855,41 @@ export default function StudentDashboard() {
                                 </span>
                               </td>
                               <td style={td}>{new Date(s.created_at).toLocaleDateString()}</td>
+=======
+                      <>
+                        <table style={table}>
+                          <thead>
+                            <tr>
+                              {['Quiz', 'Score', 'Date'].map(h => <th key={h} style={th}>{h}</th>)}
+>>>>>>> fd0fc6c (sianng)
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {dashboard.quizScores.map((s, i) => (
+                              <tr key={i}>
+                                <td style={td}>{s.quiz_title}</td>
+                                <td style={td}>
+                                  <span style={{
+                                    fontWeight: 700,
+                                    color: s.score >= 70 ? theme.accent3 : s.score >= 50 ? theme.accent4 : theme.accent5
+                                  }}>
+                                    {parseFloat(s.score).toFixed(1)}%
+                                  </span>
+                                </td>
+                                <td style={td}>{new Date(s.created_at).toLocaleDateString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {dashboard.quizScores.length >= 2 && (
+                          <div style={{ marginTop: 20 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: theme.textDim, marginBottom: 10 }}>
+                              Performance Trend
+                            </div>
+                            <QuizAnalyticsChart scores={[...dashboard.quizScores].reverse()} />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1039,21 +1140,31 @@ export default function StudentDashboard() {
                               ? <div style={emptyStateSmall}>No grades yet.</div>
                               : grades.map(g => (
                                 <div key={g.quiz_attempt_id} style={gradeRow}>
-                                  <div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={gradeTitle}>{g.quiz_title}</div>
                                     <div style={{ color: theme.textMuted, fontSize: 11 }}>
                                       {g.status === 'graded' ? 'Graded' : 'Pending'}
+                                      {g.created_at && ` · ${new Date(g.created_at).toLocaleDateString()}`}
                                     </div>
                                   </div>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                     <div style={{ ...gradeBadge, ...gradeBadgeTone(g) }}>
                                       {g.status === 'graded' ? `${parseFloat(g.score).toFixed(0)}%` : '—'}
                                     </div>
+<<<<<<< HEAD
                                     {g.quiz_attempt_id && (
                                       <button style={btnSmall} onClick={() => handleOpenGradeDetail(g.quiz_attempt_id)}>
                                         Detail
                                       </button>
                                     )}
+=======
+                                    <button
+                                      style={{ ...btnSmall, fontSize: 10, padding: '4px 8px' }}
+                                      onClick={() => handleViewGradeDetail(g.quiz_attempt_id)}
+                                    >
+                                      Detail
+                                    </button>
+>>>>>>> fd0fc6c (sianng)
                                   </div>
                                 </div>
                               ))
@@ -1300,41 +1411,67 @@ export default function StudentDashboard() {
           {/* ── NOTIFICATIONS TAB ── */}
           {tab === 'notifications' && (
             <div style={card}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
                 <div style={sectionTitle}>Notifications</div>
                 {unreadCount > 0 && (
                   <span style={notifBadge}>{unreadCount} unread</span>
                 )}
+                <div style={{ display: 'flex', gap: 6, marginLeft: 0 }}>
+                  {['all', 'unread', 'assignment', 'grade', 'course'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setNotifFilter(f)}
+                      style={{
+                        ...btnSmall,
+                        fontSize: 11,
+                        ...(notifFilter === f
+                          ? { background: theme.accent, color: '#fff', border: `1px solid ${theme.accent}` }
+                          : {})
+                      }}
+                    >
+                      {{ all: 'All', unread: 'Unread', assignment: 'Assignments', grade: 'Grades', course: 'Courses' }[f]}
+                    </button>
+                  ))}
+                </div>
                 {unreadCount > 0 && (
                   <button style={{ ...btnSmall, marginLeft: 'auto' }} onClick={markAllRead}>
                     Mark All as Read
                   </button>
                 )}
               </div>
-              {notifications.length === 0
-                ? <div style={emptyState}>No notifications yet.</div>
-                : notifications.map(n => (
-                  <div key={n.notification_id} style={{ ...notifItem, ...(n.is_read ? {} : notifItemUnread) }}>
-                    <div style={{ ...notifDotSm, background: n.is_read ? theme.textDim : theme.accent5 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={notifTitle}>{n.title}</div>
-                      <div style={notifMsg}>{n.message}</div>
-                      <div style={notifTime}>{new Date(n.created_at).toLocaleDateString()}</div>
+              {(() => {
+                const filtered = notifications.filter(n => {
+                  if (notifFilter === 'unread') return !n.is_read;
+                  if (notifFilter === 'assignment') return n.type?.includes('submission');
+                  if (notifFilter === 'grade') return n.type?.includes('grade') || n.type?.includes('graded');
+                  if (notifFilter === 'course') return n.type?.includes('course') || n.type?.includes('enroll');
+                  return true;
+                });
+                return filtered.length === 0
+                  ? <div style={emptyState}>No notifications in this category.</div>
+                  : filtered.map(n => (
+                    <div key={n.notification_id} style={{ ...notifItem, ...(n.is_read ? {} : notifItemUnread) }}>
+                      <div style={{ ...notifDotSm, background: n.is_read ? theme.textDim : theme.accent5 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={notifTitle}>{n.title}</div>
+                        <div style={notifMsg}>{n.message}</div>
+                        <div style={notifTime}>{new Date(n.created_at).toLocaleDateString()}</div>
+                      </div>
+                      {!n.is_read &&
+                        <button style={btnSmall} onClick={() => markRead(n.notification_id)}>
+                          Mark as Read
+                        </button>
+                      }
                     </div>
-                    {!n.is_read &&
-                      <button style={btnSmall} onClick={() => markRead(n.notification_id)}>
-                        Mark as Read
-                      </button>
-                    }
-                  </div>
-                ))
-              }
+                  ));
+              })()}
             </div>
           )}
         </div>
       </div>
 
       {/* ── GRADE DETAIL MODAL ── */}
+<<<<<<< HEAD
       {(gradeDetail || gradeDetailLoading) && (
         <Modal title={gradeDetail ? `${gradeDetail.quiz_title} — Detail` : 'Loading…'} onClose={() => { setGradeDetail(null); setGradeDetailLoading(false); }}>
           {gradeDetailLoading ? (
@@ -1389,6 +1526,92 @@ export default function StudentDashboard() {
               </div>
             </>
           )}
+=======
+      {showGradeDetailModal && (
+        <Modal title="Grade Detail" onClose={() => { setShowGradeDetailModal(false); setGradeDetail(null); }}>
+          {gradeDetailLoading ? (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: theme.textMuted }}>
+              Loading grade breakdown…
+            </div>
+          ) : gradeDetail ? (
+            <>
+              <div style={{ marginBottom: 16, padding: '12px 16px', background: theme.surface2, borderRadius: theme.radiusSm }}>
+                <div style={{ fontSize: 12, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>
+                  {gradeDetail.course_title}
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 8 }}>
+                  {gradeDetail.quiz_title}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "'DM Serif Display', serif",
+                    color: gradeDetail.score >= 70 ? theme.accent3 : gradeDetail.score >= 50 ? theme.accent4 : theme.accent5 }}>
+                    {gradeDetail.score != null ? `${parseFloat(gradeDetail.score).toFixed(1)}%` : '—'}
+                  </div>
+                  <div style={{ fontSize: 12, color: theme.textMuted }}>
+                    {gradeDetail.status === 'pending' ? '⏳ Awaiting review' : '✓ Graded'}
+                  </div>
+                </div>
+              </div>
+
+              {gradeDetail.overall_feedback && (
+                <div style={{ padding: '10px 14px', marginBottom: 16, borderRadius: theme.radiusSm,
+                  background: 'rgba(108,143,255,0.08)', border: '1px solid rgba(108,143,255,0.25)',
+                  fontSize: 13, color: theme.text }}>
+                  📝 <strong>Instructor Feedback:</strong> {gradeDetail.overall_feedback}
+                </div>
+              )}
+
+              {gradeDetail.status === 'pending' ? (
+                <div style={{ textAlign: 'center', color: theme.textMuted, padding: '20px 0', fontSize: 14 }}>
+                  {gradeDetail.message}
+                </div>
+              ) : (
+                gradeDetail.answers?.map((a, i) => (
+                  <div key={a.answer_id || i} style={{
+                    padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
+                    background: a.is_correct ? 'rgba(52,211,153,0.07)' : 'rgba(251,113,133,0.07)',
+                    border: `1px solid ${a.is_correct ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)'}`
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>
+                        {a.file_url ? '📎' : `Q${i + 1}.`} {a.question_text}
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', paddingTop: 1,
+                        color: a.is_correct ? theme.accent3 : theme.accent5 }}>
+                        {a.score_awarded ?? '—'} / {a.max_points}
+                      </span>
+                    </div>
+                    {a.file_url ? (
+                      <div style={{ marginTop: 6 }}>
+                        <a href={`http://localhost:5000${a.file_url}`} target="_blank" rel="noreferrer"
+                          style={{ color: theme.accent, fontSize: 12 }}>📄 View submitted file</a>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, marginTop: 6 }}>
+                        Your answer: <strong style={{ color: theme.text }}>{a.user_answer || '(no answer)'}</strong>
+                        {!a.is_correct && a.correct_answer && (
+                          <span style={{ marginLeft: 8, color: theme.accent3 }}>
+                            · Correct: <strong>{a.correct_answer}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {a.auto_feedback && (
+                      <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
+                        💡 {a.auto_feedback}
+                      </div>
+                    )}
+                    {a.graded_by && (
+                      <div style={{ fontSize: 11, color: theme.textDim, marginTop: 3 }}>
+                        Reviewed by {a.graded_by}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </>
+          ) : null}
+>>>>>>> fd0fc6c (sianng)
         </Modal>
       )}
 
@@ -1484,14 +1707,80 @@ export default function StudentDashboard() {
   );
 }
 
+// ─── Learning Analytics Chart ────────────────────────────
+function QuizAnalyticsChart({ scores }) {
+  if (!scores || scores.length < 2) return null;
+  const W = 280, H = 90, PAD = 12;
+  const vals = scores.map(s => parseFloat(s.score) || 0);
+  const min = Math.min(...vals, 0);
+  const max = Math.max(...vals, 100);
+  const range = max - min || 1;
+  const points = vals.map((v, i) => {
+    const x = PAD + (i / (vals.length - 1)) * (W - PAD * 2);
+    const y = H - PAD - ((v - min) / range) * (H - PAD * 2);
+    return [x, y];
+  });
+  const polyline = points.map(([x, y]) => `${x},${y}`).join(' ');
+  // gradient fill path
+  const fillPath = `M${points[0][0]},${H - PAD} ` +
+    points.map(([x, y]) => `L${x},${y}`).join(' ') +
+    ` L${points[points.length - 1][0]},${H - PAD} Z`;
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', overflow: 'visible' }}>
+      <defs>
+        <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#6c8fff" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#6c8fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {/* guide lines */}
+      {[0, 50, 100].map(v => {
+        const y = H - PAD - ((v - min) / range) * (H - PAD * 2);
+        if (y < PAD || y > H - PAD + 2) return null;
+        return (
+          <g key={v}>
+            <line x1={PAD} y1={y} x2={W - PAD} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+            <text x={PAD - 2} y={y + 3.5} fontSize="8" fill="rgba(255,255,255,0.22)" textAnchor="end">{v}</text>
+          </g>
+        );
+      })}
+      {/* fill */}
+      <path d={fillPath} fill="url(#chartGrad)" />
+      {/* line */}
+      <polyline points={polyline} fill="none" stroke="#6c8fff" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      {/* dots */}
+      {points.map(([x, y], i) => (
+        <g key={i}>
+          <circle cx={x} cy={y} r="3.5" fill="#6c8fff" />
+          <text x={x} y={y - 7} fontSize="8.5" fill={vals[i] >= 70 ? '#34d399' : vals[i] >= 50 ? '#f97316' : '#fb7185'}
+            textAnchor="middle" fontWeight="700">
+            {vals[i].toFixed(0)}
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 // ─── Small components ────────────────────────────────────
 function StatCard({ label, value, icon, tone, trend }) {
+<<<<<<< HEAD
   const accentColor = {
     blue: token.info,
     green: token.good,
     purple: token.brass,
     orange: token.warn,
   }[tone] || token.ink;
+=======
+  const palette = {
+    blue:   { accent: theme.accent,  iconBg: 'rgba(108,143,255,0.12)' },
+    green:  { accent: theme.accent3, iconBg: 'rgba(52,211,153,0.12)'  },
+    purple: { accent: theme.accent2, iconBg: 'rgba(167,139,250,0.12)' },
+    orange: { accent: theme.accent4, iconBg: 'rgba(249,115,22,0.12)'  },
+    red:    { accent: theme.accent5, iconBg: 'rgba(251,113,133,0.12)' },
+  }[tone] || { accent: theme.accent, iconBg: 'rgba(108,143,255,0.12)' };
+>>>>>>> fd0fc6c (sianng)
 
   return (
     <div style={{
