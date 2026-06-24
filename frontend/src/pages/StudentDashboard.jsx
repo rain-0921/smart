@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   studentGetDashboard, studentGetProfile, studentUpdateProfile,
@@ -9,51 +9,86 @@ import {
   studentGetNotifications, studentMarkRead
 } from '../services/api';
 
-const theme = {
-  bg: '#0d0f14',
-  surface: '#13161e',
-  surface2: '#1a1e29',
-  surface3: '#222636',
-  border: 'rgba(255,255,255,0.07)',
-  border2: 'rgba(255,255,255,0.12)',
-  text: '#e8eaf0',
-  textMuted: '#7a7f94',
-  textDim: '#4a4f62',
-  accent: '#6c8fff',
-  accent2: '#a78bfa',
-  accent3: '#34d399',
-  accent4: '#f97316',
-  accent5: '#fb7185',
+const token = {
+  paper: '#F6F4EE',
+  surface: '#FFFFFF',
+  surface2: '#F1E6D2',
+  surface3: '#E7E2D5',
+  line: '#E7E2D5',
+  border: '#E7E2D5',
+  border2: '#D6CBBF',
+  ink: '#1C2541',
+  inkSoft: '#5B6478',
+  inkFaint: '#94A0B4',
+  brass: '#A9792C',
+  brassSoft: '#F1E6D2',
+  brassDeep: '#7C5A1E',
+  danger: '#B3261E',
+  dangerSoft: '#FBEAE9',
+  warn: '#92400E',
+  warnSoft: '#FDF1DF',
+  good: '#1F7A4D',
+  goodSoft: '#E7F5EE',
+  info: '#2454A6',
+  infoSoft: '#EAF1FB',
+  accent: '#2454A6',
+  accent2: '#A9792C',
+  accent3: '#1F7A4D',
+  accent4: '#92400E',
+  accent5: '#B3261E',
   radius: 14,
   radiusSm: 8
 };
 
+const theme = {
+  bg: token.paper,
+  surface: token.surface,
+  surface2: token.surface2,
+  surface3: token.surface3,
+  border: token.border,
+  border2: token.border2,
+  text: token.ink,
+  textMuted: token.inkSoft,
+  textDim: token.inkFaint,
+  accent: token.accent,
+  accent2: token.accent2,
+  accent3: token.accent3,
+  accent4: token.accent4,
+  accent5: token.accent5,
+  radius: token.radius,
+  radiusSm: token.radiusSm
+};
+
 const courseTones = [
   {
-    thumb: 'linear-gradient(135deg,#1a237e,#283593)',
-    tagBg: 'rgba(108,143,255,0.1)',
-    tagColor: theme.accent,
-    progress: 'linear-gradient(90deg,#6c8fff,#a78bfa)'
+    thumb: 'linear-gradient(135deg,#2454A6,#183E7F)',
+    tagBg: 'rgba(36,84,166,0.12)',
+    tagColor: token.accent,
+    progress: 'linear-gradient(90deg,#2454A6,#A9792C)'
   },
   {
-    thumb: 'linear-gradient(135deg,#1a3320,#2e7d32)',
-    tagBg: 'rgba(52,211,153,0.1)',
-    tagColor: theme.accent3,
-    progress: 'linear-gradient(90deg,#34d399,#0891b2)'
+    thumb: 'linear-gradient(135deg,#1F7A4D,#16603C)',
+    tagBg: 'rgba(31,122,77,0.12)',
+    tagColor: token.accent3,
+    progress: 'linear-gradient(90deg,#1F7A4D,#2454A6)'
   },
   {
-    thumb: 'linear-gradient(135deg,#3e1f00,#7c4d00)',
-    tagBg: 'rgba(249,115,22,0.1)',
-    tagColor: theme.accent4,
-    progress: 'linear-gradient(90deg,#f97316,#f59e0b)'
+    thumb: 'linear-gradient(135deg,#92400E,#7A320B)',
+    tagBg: 'rgba(146,64,14,0.12)',
+    tagColor: token.accent4,
+    progress: 'linear-gradient(90deg,#92400E,#B3261E)'
   },
   {
-    thumb: 'linear-gradient(135deg,#2d004f,#6a0080)',
-    tagBg: 'rgba(167,139,250,0.1)',
-    tagColor: theme.accent2,
-    progress: 'linear-gradient(90deg,#a78bfa,#fb7185)'
+    thumb: 'linear-gradient(135deg,#7C5A1E,#A9792C)',
+    tagBg: 'rgba(169,121,44,0.12)',
+    tagColor: token.accent2,
+    progress: 'linear-gradient(90deg,#A9792C,#2454A6)'
   }
 ];
+
+const fontDisplay = "'Lora', Georgia, serif";
+const fontBody = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+const fontMono = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
 
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -62,26 +97,128 @@ const getGreeting = () => {
   return 'Good evening';
 };
 
+function GlobalStyle() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+      .adv-root * { box-sizing: border-box; }
+      .adv-root { font-family: ${fontBody}; color: ${token.ink}; background: ${token.paper}; }
+
+      .adv-nav-item { transition: background-color .15s ease, color .15s ease; position: relative; }
+      .adv-nav-item:hover { background: rgba(36,84,166,0.08); color: ${token.surface}; }
+      .adv-nav-item.active::before {
+        content: ''; position: absolute; left: -16px; top: 8px; bottom: 8px; width: 3px;
+        background: ${token.brass}; border-radius: 2px;
+      }
+
+      .adv-btn { transition: filter .15s ease, transform .1s ease; }
+      .adv-btn:hover { filter: brightness(1.05); }
+      .adv-btn:active { transform: translateY(1px); }
+      .adv-btn:focus-visible, .adv-input:focus-visible, .adv-icon-btn:focus-visible, .adv-row-btn:focus-visible, .adv-tab-btn:focus-visible {
+        outline: 2px solid ${token.brass}; outline-offset: 2px;
+      }
+
+      .adv-row-btn { transition: background-color .15s ease, border-color .15s ease; }
+
+      .adv-table-row { transition: background-color .12s ease; }
+      .adv-table-row:hover { background: ${token.paper} !important; }
+
+      .adv-card { animation: adv-rise .22s ease both; }
+      @keyframes adv-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+      .adv-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+      .adv-scroll::-webkit-scrollbar-thumb { background: ${token.line}; border-radius: 8px; }
+
+      .adv-table-wrap { overflow-x: auto; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .adv-card { animation: none; }
+      }
+
+      @media (max-width: 860px) {
+        .adv-sidebar { width: 100% !important; flex-direction: row !important; overflow-x: auto; padding: 12px !important; position: sticky; top: 0; z-index: 50; }
+        .adv-sidebar .adv-brand, .adv-sidebar .adv-spacer, .adv-sidebar .adv-foot { display: none !important; }
+        .adv-shell { flex-direction: column !important; }
+        .adv-nav-item { white-space: nowrap; }
+        .adv-nav-item.active::before { left: 0; top: auto; bottom: -10px; right: 8px; width: auto; height: 3px; }
+      }
+    `}</style>
+  );
+}
+
+function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.8 }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth, strokeLinecap: 'round', strokeLinejoin: 'round' };
+  switch (name) {
+    case 'home': return <svg {...common}><path d="M3 11.5 12 3l9 8.5" /><path d="M5 12v8h14v-8" /><path d="M9 21v-6h6v6" /></svg>;
+    case 'courses': return <svg {...common}><path d="M4 5h16v14H4z" /><path d="M4 8h16" /><path d="M8 5v14" /></svg>;
+    case 'lessons': return <svg {...common}><path d="M5 18h14" /><path d="M5 6h14" /><path d="M5 12h14" /></svg>;
+    case 'progress': return <svg {...common}><path d="M4 16l4-4 3 3 5-5" /><path d="M21 21H3" /></svg>;
+    case 'notifications': return <svg {...common}><path d="M18 8a6 6 0 0 0-12 0v4H4l1 2h14l1-2h-2V8" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>;
+    case 'profile': return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a7 7 0 0 1 14 0v1" /></svg>;
+    case 'logout': return <svg {...common}><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>;
+    case 'check': return <svg {...common}><path d="M5 13l4 4L19 7" /></svg>;
+    case 'x': return <svg {...common}><path d="M6 6l12 12M18 6 6 18" /></svg>;
+    default: return null;
+  }
+}
+
+// ─── Avatar ──────────────────────────────────────────────
+function initials(name = '') {
+  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '?';
+}
+function Avatar({ name, photoUrl, size = 38 }) {
+  const [broken, setBroken] = useState(false);
+  if (photoUrl && !broken) {
+    return (
+      <img src={photoUrl} alt={name} onError={() => setBroken(true)}
+        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${token.line}`, flexShrink: 0 }} />
+    );
+  }
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', flexShrink: 0,
+      background: token.brassSoft, color: token.brassDeep,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: fontDisplay, fontWeight: 600, fontSize: size * 0.38,
+      border: `1px solid ${token.brass}33`,
+    }}>{initials(name)}</div>
+  );
+}
+
+
 // ─── Reusable UI ─────────────────────────────────────────
 function Alert({ msg, type }) {
   if (!msg) return null;
-  const palette = type === 'error'
-    ? { bg: 'rgba(251,113,133,0.12)', color: theme.accent5, border: 'rgba(251,113,133,0.35)' }
-    : { bg: 'rgba(52,211,153,0.12)', color: theme.accent3, border: 'rgba(52,211,153,0.35)' };
+  const ok = type !== 'error';
   return (
-    <div style={{ ...alertBox, background: palette.bg, color: palette.color, borderColor: palette.border }}>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 9,
+      padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13.5,
+      background: ok ? token.goodSoft : token.dangerSoft,
+      color: ok ? token.good : token.danger,
+      border: `1px solid ${ok ? token.good : token.danger}22`,
+    }}>
+      <Icon name={ok ? 'check' : 'x'} size={16} />
       {msg}
     </div>
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
-    <div style={overlay}>
-      <div style={modalBox}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontFamily: "'DM Serif Display', serif" }}>{title}</h3>
-          <button onClick={onClose} style={closeBtn} aria-label="Close">✕</button>
+    <div style={overlay} onClick={onClose}>
+      <div style={{ ...modalBox, maxWidth: wide ? 860 : 520 }} onClick={(e) => e.stopPropagation()} className="adv-scroll adv-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontFamily: fontDisplay, fontWeight: 600, color: token.ink, fontSize: 20 }}>{title}</h3>
+          <button onClick={onClose} style={closeBtn} aria-label="Close">
+            <Icon name="x" size={16} color={token.inkSoft} />
+          </button>
         </div>
         {children}
       </div>
@@ -95,6 +232,7 @@ export default function StudentDashboard() {
   const [tab, setTab] = useState('dashboard');
   const [alert, setAlert] = useState({ msg: '', type: '' });
   const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState({});
 
   // data
   const [dashboard, setDashboard] = useState(null);
@@ -130,6 +268,13 @@ export default function StudentDashboard() {
     setAlert({ msg, type });
     setTimeout(() => setAlert({ msg: '', type: '' }), 3000);
   };
+
+  const withLoading = useCallback(async (key, fn) => {
+    setLoading(l => ({ ...l, [key]: true }));
+    try { await fn(); }
+    catch (e) { showAlert(e?.response?.data?.message || 'Could not load this section. Try again.', 'error'); }
+    finally { setLoading(l => ({ ...l, [key]: false })); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const existing = document.getElementById('sils-dashboard-fonts');
@@ -380,15 +525,20 @@ export default function StudentDashboard() {
 
   // ─────────────────────────────────────────────────────────
   return (
-    <div style={appShell}>
+    <div className="adv-root" style={appShell}>
+      <GlobalStyle />
       {/* Sidebar */}
       <nav style={sidebar}>
-        <div style={sidebarLogo}>
+        <div className="adv-brand" style={sidebarLogo}>
           <div style={logoBadge}>
-            <div style={logoIcon}>🎓</div>
+            <div style={{
+              width: 34, height: 34, borderRadius: '50%', border: `1.5px solid ${token.brass}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: fontDisplay, fontStyle: 'italic', fontWeight: 600, color: token.brass, fontSize: 14,
+            }}>SL</div>
             <div>
               <div style={logoText}>SILS</div>
-              <span style={logoSub}>Learning System</span>
+              <span style={logoSub}>Student Portal</span>
             </div>
           </div>
         </div>
@@ -396,18 +546,19 @@ export default function StudentDashboard() {
         <div style={navSection}>
           <div style={navLabel}>Main</div>
           {[
-            { key: 'dashboard', label: 'Dashboard', icon: '⊞' },
-            { key: 'courses', label: 'Browse Courses', icon: '📚' },
-            { key: 'lessons', label: 'My Lessons', icon: '▶' },
-            { key: 'progress', label: 'My Progress', icon: '◉' }
+            { key: 'dashboard', label: 'Dashboard', icon: 'home' },
+            { key: 'courses', label: 'Browse Courses', icon: 'courses' },
+            { key: 'lessons', label: 'My Lessons', icon: 'lessons' },
+            { key: 'progress', label: 'My Progress', icon: 'progress' }
           ].map(item => (
             <div
               key={item.key}
               onClick={() => setTab(item.key)}
-              style={{ ...navItem, ...(tab === item.key ? navItemActive : {}) }}
+              className={`adv-nav-item${tab === item.key ? ' active' : ''}`}
+              style={{ ...navItem, background: tab === item.key ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === item.key ? '#fff' : '#B7BFCF' }}
             >
-              <span style={navIcon}>{item.icon}</span>
-              {item.label}
+              <span style={navIcon}><Icon name={item.icon} size={16} /></span>
+              <span style={{ flex: 1 }}>{item.label}</span>
             </div>
           ))}
         </div>
@@ -416,29 +567,46 @@ export default function StudentDashboard() {
           <div style={navLabel}>Personal</div>
           <div
             onClick={() => setTab('notifications')}
-            style={{ ...navItem, ...(tab === 'notifications' ? navItemActive : {}) }}
+            className={`adv-nav-item${tab === 'notifications' ? ' active' : ''}`}
+            style={{ ...navItem, background: tab === 'notifications' ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === 'notifications' ? '#fff' : '#B7BFCF' }}
           >
-            <span style={navIcon}>🔔</span>
-            Notifications
-            {unreadCount > 0 && <span style={navBadge}>{unreadCount}</span>}
-          </div>
-          <div onClick={openProfile} style={navItem}>
-            <span style={navIcon}>◑</span>
-            Profile
-          </div>
-          <div onClick={logout} style={{ ...navItem, color: theme.accent5 }}>
-            <span style={navIcon}>🚪</span>
-            Logout
+            <span style={navIcon}><Icon name="notifications" size={16} /></span>
+            <span style={{ flex: 1 }}>Notifications</span>
+            {unreadCount > 0 && (
+              <span style={{ background: token.brass, color: '#1C2541', fontSize: 11, fontWeight: 700, borderRadius: 99, padding: '1px 7px', fontFamily: fontMono }}>
+                {unreadCount}
+              </span>
+            )}
           </div>
         </div>
 
+        <div className="adv-spacer" style={{ flex: 1 }} />
 
+        <div style={{ padding: '0 12px' }}>
+          <div onClick={openProfile} className="adv-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
+            <Avatar name={user?.username} size={28} />
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: 13, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {user?.username}
+              </div>
+              <div style={{ fontSize: 11, color: '#8893A8' }}>View profile</div>
+            </div>
+          </div>
+          <div onClick={logout} className="adv-nav-item adv-foot" style={{ ...navItem, color: '#E2A6A1', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Icon name="logout" size={16} /> Log out
+          </div>
+        </div>
       </nav>
 
       {/* Main */}
       <div style={main}>
         <header style={topbar}>
-          <div style={pageTitle}>{tabTitle(tab, selectedCourse)}</div>
+          <div>
+            <div style={{ fontFamily: fontMono, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: token.brassDeep, marginBottom: 4 }}>
+              {tabEyebrow(tab)}
+            </div>
+            <div style={pageTitle}>{tabTitle(tab, selectedCourse)}</div>
+          </div>
           <div style={topbarRight}>
             <div style={searchBox}>
               <span style={{ color: theme.textDim }}>🔍</span>
@@ -450,11 +618,11 @@ export default function StudentDashboard() {
               />
             </div>
             <button style={iconBtn} onClick={() => setTab('notifications')} aria-label="Notifications">
-              🔔
+              <Icon name="notifications" size={17} />
               {unreadCount > 0 && <span style={notifDot} />}
             </button>
-            <button style={iconBtn} onClick={openProfile} aria-label="Profile">
-              <div style={miniAvatar}>{user.username?.[0]?.toUpperCase() || 'S'}</div>
+            <button style={{ ...iconBtn, border: 'none', background: 'none', cursor: 'pointer' }} onClick={openProfile} aria-label="Profile">
+              <Avatar name={user?.username} size={32} />
             </button>
           </div>
         </header>
@@ -464,13 +632,10 @@ export default function StudentDashboard() {
 
           {/* ── DASHBOARD TAB ── */}
           {tab === 'dashboard' && !dashboard && (
-            <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textMuted }}>
-              <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
-              <div style={{ fontSize: 14 }}>Loading your dashboard…</div>
-            </div>
+            <Loading label="Loading your dashboard…" />
           )}
           {tab === 'dashboard' && dashboard && (
-            <div>
+            <div className="adv-card">
               <div style={{ marginBottom: 24 }}>
                 <h2 style={greetingTitle}>{getGreeting()}, {user.username} 👋</h2>
                 <p style={greetingSub}>
@@ -478,7 +643,7 @@ export default function StudentDashboard() {
                 </p>
               </div>
 
-              <div style={statsGrid}>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 28 }}>
                 <StatCard
                   label="Enrolled Courses"
                   value={enrolledCount}
@@ -519,7 +684,7 @@ export default function StudentDashboard() {
                 <div>
                   <div style={sectionTitle}>Continue Learning</div>
                   {dashboard.enrollments.length === 0 ? (
-                    <div style={emptyState}>No courses yet. Browse the catalogue!</div>
+                    <Empty>No courses yet. Browse the catalogue!</Empty>
                   ) : (
                     <div style={courseGrid}>
                       {dashboard.enrollments.map((e, i) => {
@@ -603,7 +768,7 @@ export default function StudentDashboard() {
                         </thead>
                         <tbody>
                           {dashboard.quizScores.map((s, i) => (
-                            <tr key={i}>
+                            <tr key={i} className="adv-table-row">
                               <td style={td}>{s.quiz_title}</td>
                               <td style={td}>
                                 <span style={{
@@ -990,10 +1155,7 @@ export default function StudentDashboard() {
           {tab === 'progress' && (
             <div>
               {!progressData ? (
-                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textMuted }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
-                  <div style={{ fontSize: 14 }}>Loading your progress…</div>
-                </div>
+                <Loading label="Loading your progress…" />
               ) : (
                 <>
                   {/* GPA & at-risk banner */}
@@ -1156,7 +1318,7 @@ export default function StudentDashboard() {
       {(gradeDetail || gradeDetailLoading) && (
         <Modal title={gradeDetail ? `${gradeDetail.quiz_title} — Detail` : 'Loading…'} onClose={() => { setGradeDetail(null); setGradeDetailLoading(false); }}>
           {gradeDetailLoading ? (
-            <div style={{ textAlign: 'center', padding: '30px 0', color: theme.textMuted }}>Loading detail…</div>
+            <Loading label="Loading detail…" />
           ) : gradeDetail.status === 'pending' ? (
             <div style={{ padding: '20px 0', textAlign: 'center', color: theme.accent4, fontSize: 14 }}>
               <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
@@ -1214,9 +1376,7 @@ export default function StudentDashboard() {
       {showProfileModal && (
         <Modal title="My Profile" onClose={() => setShowProfileModal(false)}>
           {profileLoading ? (
-            <div style={{ textAlign: 'center', padding: '30px 0', color: theme.textMuted }}>
-              Loading profile…
-            </div>
+            <Loading label="Loading profile…" />
           ) : (
             <>
               {/* Read-only info */}
@@ -1306,23 +1466,25 @@ export default function StudentDashboard() {
 
 // ─── Small components ────────────────────────────────────
 function StatCard({ label, value, icon, tone, trend }) {
-  const palette = {
-    blue: { accent: theme.accent, iconBg: 'rgba(108,143,255,0.12)' },
-    green: { accent: theme.accent3, iconBg: 'rgba(52,211,153,0.12)' },
-    purple: { accent: theme.accent2, iconBg: 'rgba(167,139,250,0.12)' },
-    orange: { accent: theme.accent4, iconBg: 'rgba(249,115,22,0.12)' }
-  }[tone] || { accent: theme.accent, iconBg: 'rgba(108,143,255,0.12)' };
+  const accentColor = {
+    blue: token.info,
+    green: token.good,
+    purple: token.brass,
+    orange: token.warn,
+  }[tone] || token.ink;
 
   return (
-    <div style={{ ...statCard, borderTop: `2px solid ${palette.accent}` }}>
-      <div style={{ ...statIcon, background: palette.iconBg }}>{icon}</div>
-      <div style={statValue}>{value}</div>
-      <div style={statLabel}>{label}</div>
+    <div style={{
+      background: token.surface, borderRadius: 10, padding: '16px 20px',
+      border: `1px solid ${token.line}`, borderLeft: `4px solid ${accentColor}`, flex: '1 1 180px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: token.inkSoft }}>{label}</span>
+        {icon && <span style={{ fontSize: 16 }}>{icon}</span>}
+      </div>
+      <div style={{ fontFamily: fontMono, fontSize: 28, fontWeight: 600, color: token.ink, marginTop: 6, lineHeight: 1.1 }}>{value}</div>
       {trend && (
-        <div style={{
-          ...statTrend,
-          color: trend.type === 'down' ? theme.accent5 : theme.accent3
-        }}>
+        <div style={{ fontSize: 11, fontWeight: 500, marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 4, color: trend.type === 'down' ? token.danger : token.good }}>
           {trend.type === 'down' ? '⚠' : '↑'} {trend.text}
         </div>
       )}
@@ -1331,6 +1493,14 @@ function StatCard({ label, value, icon, tone, trend }) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────
+const tabEyebrow = (t) => ({
+  dashboard: 'Overview',
+  courses: 'Catalogue',
+  lessons: 'Content',
+  progress: 'Analytics',
+  notifications: 'Inbox',
+}[t] || '');
+
 const tabTitle = (t, course) => ({
   dashboard: 'Dashboard',
   courses: 'Browse Courses',
@@ -1345,6 +1515,13 @@ const statusPill = (type) => ({
   done: { background: 'rgba(108,143,255,0.12)', color: theme.accent }
 }[type] || { background: theme.surface2, color: theme.textMuted });
 
+function Empty({ children }) {
+  return <p style={{ color: token.inkFaint, fontSize: 13.5, padding: '6px 0' }}>{children || 'Nothing here yet.'}</p>;
+}
+function Loading({ label = 'Loading…' }) {
+  return <p style={{ color: token.inkFaint, fontSize: 13.5, padding: '6px 0' }}>{label}</p>;
+}
+
 const gradeBadgeTone = (g) => {
   if (g.status !== 'graded') return { background: theme.surface2, color: theme.textMuted };
   if (g.score >= 70) return { background: 'rgba(52,211,153,0.12)', color: theme.accent3 };
@@ -1353,32 +1530,32 @@ const gradeBadgeTone = (g) => {
 };
 
 // ─── Styles ──────────────────────────────────────────────
-const appShell = { display: 'flex', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif", background: theme.bg, color: theme.text };
-const sidebar = { width: 240, minWidth: 240, background: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', padding: '28px 0', position: 'fixed', height: '100vh', zIndex: 100, overflowY: 'auto' };
-const sidebarLogo = { padding: '0 24px 28px', borderBottom: `1px solid ${theme.border}`, marginBottom: 20 };
+const appShell = { display: 'flex', minHeight: '100vh', fontFamily: fontBody, background: theme.bg, color: theme.text };
+const sidebar = { width: 240, minWidth: 240, background: token.ink, color: token.surface, display: 'flex', flexDirection: 'column', padding: '28px 0', position: 'fixed', height: '100vh', zIndex: 100, overflowY: 'auto' };
+const sidebarLogo = { padding: '0 24px 28px', borderBottom: `1px solid ${token.line}`, marginBottom: 20 };
 const logoBadge = { display: 'inline-flex', alignItems: 'center', gap: 10 };
-const logoIcon = { width: 36, height: 36, background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 };
-const logoText = { fontFamily: "'DM Serif Display', serif", fontSize: 18, color: theme.text, letterSpacing: -0.3 };
-const logoSub = { fontSize: 10, color: theme.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', display: 'block', marginTop: 1 };
+const logoIcon = { width: 36, height: 36, background: token.brass, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color: token.surface };
+const logoText = { fontFamily: fontDisplay, fontSize: 18, color: token.surface, letterSpacing: -0.3 };
+const logoSub = { fontSize: 10, color: token.brassSoft, letterSpacing: 1.5, textTransform: 'uppercase', display: 'block', marginTop: 1 };
 const navSection = { padding: '0 12px', marginBottom: 8 };
-const navLabel = { fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: theme.textDim, padding: '8px 12px', marginBottom: 4 };
-const navItem = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: theme.radiusSm, color: theme.textMuted, fontSize: 14, cursor: 'pointer', transition: 'all 0.15s ease' };
-const navItemActive = { background: 'linear-gradient(135deg, rgba(108,143,255,0.15), rgba(167,139,250,0.1))', color: theme.accent, fontWeight: 500 };
+const navLabel = { fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: token.brassSoft, padding: '8px 12px', marginBottom: 4 };
+const navItem = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: token.radiusSm, color: token.surface, fontSize: 14, cursor: 'pointer', transition: 'all 0.15s ease' };
+const navItemActive = { background: 'rgba(255,255,255,0.08)', color: token.surface, fontWeight: 600 };
 const navIcon = { width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const navBadge = { marginLeft: 'auto', background: theme.accent5, color: '#fff', fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, minWidth: 18, textAlign: 'center' };
-const sidebarFooter = { marginTop: 'auto', padding: '20px 12px 0', borderTop: `1px solid ${theme.border}` };
-const userCard = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: theme.radiusSm, cursor: 'pointer', transition: 'background 0.15s', background: theme.surface2 };
-const avatar = { width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600, color: '#fff', flexShrink: 0 };
+const navBadge = { marginLeft: 'auto', background: token.accent5, color: '#fff', fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, minWidth: 18, textAlign: 'center' };
+const sidebarFooter = { marginTop: 'auto', padding: '20px 12px 0', borderTop: `1px solid ${token.line}` };
+const userCard = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: token.radiusSm, cursor: 'pointer', transition: 'background 0.15s', background: token.inkSoft };
+const avatar = { width: 36, height: 36, borderRadius: '50%', background: token.brass, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600, color: token.surface, flexShrink: 0 };
 const userInfo = { flex: 1, minWidth: 0 };
-const userName = { fontSize: 13, fontWeight: 500, color: theme.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-const userRole = { fontSize: 11, color: theme.textMuted };
-const main = { marginLeft: 240, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' };
-const topbar = { display: 'flex', alignItems: 'center', gap: 16, padding: '20px 32px', borderBottom: `1px solid ${theme.border}`, background: theme.bg, position: 'sticky', top: 0, zIndex: 50, backdropFilter: 'blur(12px)' };
-const pageTitle = { fontFamily: "'DM Serif Display', serif", fontSize: 22, color: theme.text, letterSpacing: -0.3 };
+const userName = { fontSize: 13, fontWeight: 500, color: token.surface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+const userRole = { fontSize: 11, color: token.brassSoft };
+const main = { marginLeft: 240, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', background: token.paper };
+const topbar = { display: 'flex', alignItems: 'center', gap: 16, padding: '20px 32px', borderBottom: `1px solid ${token.line}`, background: token.paper, position: 'sticky', top: 0, zIndex: 50 };
+const pageTitle = { fontFamily: fontDisplay, fontSize: 22, color: token.ink, letterSpacing: -0.3 };
 const topbarRight = { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 };
-const searchBox = { display: 'flex', alignItems: 'center', gap: 8, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radiusSm, padding: '8px 14px', width: 240 };
-const searchInput = { background: 'none', border: 'none', outline: 'none', color: theme.text, fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: '100%' };
-const iconBtn = { width: 38, height: 38, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radiusSm, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', color: theme.textMuted };
+const searchBox = { display: 'flex', alignItems: 'center', gap: 8, background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radiusSm, padding: '8px 14px', width: 240 };
+const searchInput = { background: 'none', border: 'none', outline: 'none', color: token.ink, fontFamily: fontBody, fontSize: 13, width: '100%' };
+const iconBtn = { width: 38, height: 38, background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radiusSm, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', color: token.inkSoft };
 const notifDot = { position: 'absolute', top: 6, right: 6, width: 8, height: 8, background: theme.accent5, borderRadius: '50%', border: `2px solid ${theme.bg}` };
 const miniAvatar = { width: 26, height: 26, borderRadius: 6, background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, color: '#fff' };
 const content = { padding: '28px 32px', flex: 1 };
@@ -1389,25 +1566,25 @@ const gridTwoOne = { display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20 };
 const courseGrid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 28 };
 const courseGridWide = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 20 };
 const sectionTitle = { fontSize: 12, fontWeight: 600, letterSpacing: 1.2, textTransform: 'uppercase', color: theme.textMuted, marginBottom: 14 };
-const card = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 22 };
+const card = { background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: 22 };
 const cardHeader = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 };
-const cardTitle = { fontFamily: "'DM Serif Display', serif", fontSize: 16, color: theme.text };
-const courseCard = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 18, cursor: 'pointer', transition: 'all 0.2s ease', position: 'relative', overflow: 'hidden' };
-const courseThumb = { height: 90, borderRadius: theme.radiusSm, marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 };
+const cardTitle = { fontFamily: fontDisplay, fontSize: 16, color: token.ink };
+const courseCard = { background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: 18, cursor: 'pointer', transition: 'all 0.2s ease', position: 'relative', overflow: 'hidden' };
+const courseThumb = { height: 90, borderRadius: token.radiusSm, marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 };
 const courseTag = { fontSize: 10, fontWeight: 600, letterSpacing: 0.8, textTransform: 'uppercase', padding: '3px 8px', borderRadius: 4, display: 'inline-block', marginBottom: 8 };
-const courseTitle = { fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 6, lineHeight: 1.4 };
-const courseMeta = { fontSize: 12, color: theme.textMuted, marginBottom: 12 };
-const courseDesc = { fontSize: 13, color: theme.textMuted, marginBottom: 14, minHeight: 40 };
-const progressBar = { background: theme.surface3, borderRadius: 4, height: 5, overflow: 'hidden', marginBottom: 6 };
+const courseTitle = { fontSize: 14, fontWeight: 600, color: token.ink, marginBottom: 6, lineHeight: 1.4 };
+const courseMeta = { fontSize: 12, color: token.inkSoft, marginBottom: 12 };
+const courseDesc = { fontSize: 13, color: token.inkSoft, marginBottom: 14, minHeight: 40 };
+const progressBar = { background: token.surface3, borderRadius: 4, height: 5, overflow: 'hidden', marginBottom: 6 };
 const progressFill = { height: '100%', borderRadius: 4, transition: 'width 1s ease' };
-const progressLabel = { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: theme.textMuted };
-const quizItem = { display: 'flex', alignItems: 'center', gap: 14, padding: 12, borderRadius: theme.radiusSm, background: theme.surface2, border: `1px solid ${theme.border}`, marginBottom: 8 };
+const progressLabel = { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: token.inkSoft };
+const quizItem = { display: 'flex', alignItems: 'center', gap: 14, padding: 12, borderRadius: token.radiusSm, background: token.surface2, border: `1px solid ${token.line}`, marginBottom: 8 };
 const quizIcon = { width: 38, height: 38, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 };
 const quizInfo = { flex: 1, minWidth: 0 };
-const quizName = { fontSize: 13, fontWeight: 500, color: theme.text, marginBottom: 2 };
-const quizMeta = { fontSize: 11, color: theme.textMuted };
+const quizName = { fontSize: 13, fontWeight: 500, color: token.ink, marginBottom: 2 };
+const quizMeta = { fontSize: 11, color: token.inkSoft };
 const quizStatus = { fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 20, whiteSpace: 'nowrap' };
-const notifItem = { display: 'flex', gap: 12, padding: 12, borderRadius: theme.radiusSm, marginBottom: 6, transition: 'background 0.15s', cursor: 'pointer', borderLeft: '3px solid transparent' };
+const notifItem = { display: 'flex', gap: 12, padding: 12, borderRadius: token.radiusSm, marginBottom: 6, transition: 'background 0.15s', cursor: 'pointer', borderLeft: '3px solid transparent' };
 const notifItemUnread = { borderLeftColor: theme.accent, background: 'rgba(108,143,255,0.04)' };
 const notifDotSm = { width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 5 };
 const notifTitle = { fontSize: 13, fontWeight: 500, color: theme.text, marginBottom: 2 };
