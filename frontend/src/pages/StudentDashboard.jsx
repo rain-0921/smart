@@ -254,6 +254,9 @@ export default function StudentDashboard() {
   const [quizResult, setQuizResult] = useState(null);
   const [timeLeft, setTimeLeft] = useState(null);
 
+  // lesson context panel
+  const [selectedLesson, setSelectedLesson] = useState(null);
+
   // assignment (file_upload) state
   const [assignmentData, setAssignmentData] = useState(null); // { quiz, question, submission, deadline_passed }
   const [assignmentFile, setAssignmentFile] = useState(null);
@@ -335,6 +338,7 @@ export default function StudentDashboard() {
     setSelectedCourse(course);
     setActiveQuiz(null);
     setQuizResult(null);
+    setSelectedLesson(null);
     setModules([]);
     setQuizzes([]);
     setGrades([]);
@@ -849,7 +853,14 @@ export default function StudentDashboard() {
                           {mod.description && <p style={{ color: theme.textMuted, fontSize: 13 }}>{mod.description}</p>}
                           <div style={{ marginTop: 12 }}>
                             {mod.lessons?.map(l => (
-                              <div key={l.lesson_id} style={lessonRow}>
+                              <div key={l.lesson_id} style={{
+                                ...lessonRow,
+                                background: selectedLesson?.lesson_id === l.lesson_id
+                                  ? 'rgba(36,84,166,0.06)' : 'transparent',
+                                borderRadius: selectedLesson?.lesson_id === l.lesson_id ? 8 : 0,
+                                padding: selectedLesson?.lesson_id === l.lesson_id ? '10px 8px' : '10px 0',
+                                margin: selectedLesson?.lesson_id === l.lesson_id ? '0 -8px' : 0,
+                              }}>
                                 <span style={{ fontSize: 16 }}>
                                   {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : '📝'}
                                 </span>
@@ -868,19 +879,34 @@ export default function StudentDashboard() {
                                           related_item_type: 'lesson',
                                           related_item_id: l.lesson_id,
                                         }).catch(() => {});
-                                        window.open(l.content_url, '_blank', 'noreferrer');
+                                        setSelectedLesson(l);
+                                        setActiveQuiz(null);
+                                        setQuizResult(null);
+                                        setAssignmentData(null);
                                       }}
                                     >Open Content ↗</button>
                                   )}
                                   {l.content_url && l.content_type !== 'video' && (
-                                    <a href={l.content_url} target="_blank" rel="noreferrer" style={link}>
-                                      Open Content ↗
-                                    </a>
+                                    <button
+                                      style={{ ...link, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: 'inherit', color: theme.accent }}
+                                      onClick={() => {
+                                        setSelectedLesson(l);
+                                        setActiveQuiz(null);
+                                        setQuizResult(null);
+                                        setAssignmentData(null);
+                                      }}
+                                    >Open Content ↗</button>
                                   )}
                                   {l.content_text &&
-                                    <div style={lessonText}>
-                                      {l.content_text}
-                                    </div>
+                                    <button
+                                      style={{ ...link, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: 'inherit', color: theme.accent, display: 'block', marginTop: 4 }}
+                                      onClick={() => {
+                                        setSelectedLesson(l);
+                                        setActiveQuiz(null);
+                                        setQuizResult(null);
+                                        setAssignmentData(null);
+                                      }}
+                                    >Open Content ↗</button>
                                   }
                                 </div>
                               </div>
@@ -994,7 +1020,175 @@ export default function StudentDashboard() {
                         </div>
                       )}
 
-                      {!activeQuiz && !quizResult && !assignmentData && (
+                      {/* ── LESSON CONTENT PANEL ── */}
+                      {!activeQuiz && !quizResult && !assignmentData && selectedLesson && (
+                        <div style={{ ...card, marginBottom: 16 }} className="adv-card">
+                          {/* Header */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <span style={{
+                                  fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
+                                  padding: '3px 8px', borderRadius: 4,
+                                  background: selectedLesson.content_type === 'video'
+                                    ? 'rgba(36,84,166,0.12)' : selectedLesson.content_type === 'pdf'
+                                    ? 'rgba(179,38,30,0.10)' : 'rgba(31,122,77,0.10)',
+                                  color: selectedLesson.content_type === 'video'
+                                    ? token.accent : selectedLesson.content_type === 'pdf'
+                                    ? token.accent5 : token.accent3
+                                }}>
+                                  {selectedLesson.content_type === 'video' ? '🎬 Video'
+                                    : selectedLesson.content_type === 'pdf' ? '📄 PDF'
+                                    : '📝 Reading'}
+                                </span>
+                                {selectedLesson.duration_minutes && (
+                                  <span style={{ fontSize: 11, color: theme.textDim }}>
+                                    ⏱ {selectedLesson.duration_minutes} min
+                                  </span>
+                                )}
+                              </div>
+                              <h3 style={{ margin: 0, fontFamily: fontDisplay, fontSize: 17, color: token.ink, lineHeight: 1.3 }}>
+                                {selectedLesson.title}
+                              </h3>
+                            </div>
+                            <button
+                              style={{ ...btnGhost, padding: '6px 12px', fontSize: 12, marginLeft: 12, flexShrink: 0 }}
+                              onClick={() => setSelectedLesson(null)}
+                            >← Back</button>
+                          </div>
+
+                          <div style={{ height: 1, background: token.line, marginBottom: 16 }} />
+
+                          {/* VIDEO content */}
+                          {selectedLesson.content_type === 'video' && (
+                            <div>
+                              {selectedLesson.content_url && (
+                                (() => {
+                                  const url = selectedLesson.content_url;
+                                  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/);
+                                  const ytEmbed = ytMatch
+                                    ? `https://www.youtube.com/embed/${ytMatch[1]}`
+                                    : null;
+
+                                  return ytEmbed ? (
+                                    <div style={{ borderRadius: token.radiusSm, overflow: 'hidden', marginBottom: 16, aspectRatio: '16/9', background: '#000' }}>
+                                      <iframe
+                                        src={ytEmbed}
+                                        title={selectedLesson.title}
+                                        style={{ width: '100%', height: '100%', border: 'none' }}
+                                        allowFullScreen
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div style={{
+                                      borderRadius: token.radiusSm, marginBottom: 16,
+                                      background: `linear-gradient(135deg, ${token.ink}, #2454A6)`,
+                                      aspectRatio: '16/9', display: 'flex', flexDirection: 'column',
+                                      alignItems: 'center', justifyContent: 'center', gap: 14,
+                                      color: '#fff', position: 'relative', overflow: 'hidden'
+                                    }}>
+                                      <div style={{ fontSize: 48, opacity: 0.9 }}>▶</div>
+                                      <div style={{ fontFamily: fontDisplay, fontSize: 15, opacity: 0.85, textAlign: 'center', padding: '0 24px' }}>
+                                        {selectedLesson.title}
+                                      </div>
+                                      <a
+                                        href={url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={{
+                                          background: token.brass, color: '#fff', textDecoration: 'none',
+                                          padding: '9px 20px', borderRadius: token.radiusSm,
+                                          fontSize: 13, fontWeight: 600
+                                        }}
+                                        onClick={() => studentLogActivity({
+                                          activity_type: 'video_watch',
+                                          description: `Watched video: ${selectedLesson.title}`,
+                                          related_item_type: 'lesson',
+                                          related_item_id: selectedLesson.lesson_id,
+                                        }).catch(() => {})}
+                                      >
+                                        Open Video ↗
+                                      </a>
+                                    </div>
+                                  );
+                                })()
+                              )}
+                              <div style={{ fontSize: 13, color: theme.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 16 }}>ℹ️</span>
+                                Video content for this lesson. Watch the full video to complete this lesson.
+                              </div>
+                            </div>
+                          )}
+
+                          {/* PDF content */}
+                          {selectedLesson.content_type === 'pdf' && selectedLesson.content_url && (
+                            <div>
+                              <div style={{
+                                borderRadius: token.radiusSm, overflow: 'hidden',
+                                border: `1px solid ${token.line}`, marginBottom: 14,
+                                height: 420, background: token.surface2
+                              }}>
+                                <iframe
+                                  src={selectedLesson.content_url}
+                                  title={selectedLesson.title}
+                                  style={{ width: '100%', height: '100%', border: 'none' }}
+                                />
+                              </div>
+                              <a
+                                href={selectedLesson.content_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none', marginBottom: 0 }}
+                              >
+                                📄 Open PDF in new tab ↗
+                              </a>
+                            </div>
+                          )}
+
+                          {/* TEXT content */}
+                          {selectedLesson.content_type === 'text' && selectedLesson.content_text && (
+                            <div style={{
+                              background: token.surface2,
+                              border: `1px solid ${token.line}`,
+                              borderRadius: token.radiusSm,
+                              padding: '20px 22px',
+                              fontSize: 14, lineHeight: 1.75,
+                              color: token.ink,
+                              whiteSpace: 'pre-wrap',
+                              fontFamily: fontBody,
+                            }}>
+                              {selectedLesson.content_text}
+                            </div>
+                          )}
+
+                          {/* No content fallback */}
+                          {!selectedLesson.content_url && !selectedLesson.content_text && (
+                            <div style={{ ...emptyState, paddingTop: 24 }}>
+                              <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+                              <div>Content for this lesson hasn't been uploaded yet.</div>
+                            </div>
+                          )}
+
+                          {/* Mark complete prompt */}
+                          <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${token.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: 12, color: theme.textMuted }}>Finished this lesson?</span>
+                            <button
+                              style={btnPrimary}
+                              onClick={() => {
+                                const parentMod = modules.find(m => m.lessons?.some(l => l.lesson_id === selectedLesson.lesson_id));
+                                if (parentMod && parentMod.progress_status !== 'completed') {
+                                  handleComplete(parentMod.module_id);
+                                }
+                                setSelectedLesson(null);
+                              }}
+                            >
+                              ✓ Mark Module Complete
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {!activeQuiz && !quizResult && !assignmentData && !selectedLesson && (
                         <>
                           <div style={card}>
                             <div style={cardHeader}>

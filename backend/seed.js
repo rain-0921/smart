@@ -130,18 +130,79 @@ async function seed() {
     await db.execute('TRUNCATE TABLE `lesson`');
     const lessons = [
       // lesson_id, module_id, title, content_type, content_url, content_text, sort_order, duration_minutes, status
-      [1,  1, 'What is HTML?',              'video', 'https://cdn.smis.edu/html-intro.mp4',        null, 1, 10, 'published'],
-      [2,  1, 'HTML Document Structure',   'text',  null, 'A basic HTML document starts with <!DOCTYPE html>...', 2, 5, 'published'],
-      [3,  2, 'Introduction to CSS',       'video', 'https://cdn.smis.edu/css-intro.mp4',          null, 1, 12, 'published'],
-      [4,  2, 'CSS Box Model',             'pdf',   'https://cdn.smis.edu/box-model.pdf',          null, 2, 8,  'published'],
-      [5,  3, 'Variables and Data Types',  'video', 'https://cdn.smis.edu/js-vars.mp4',            null, 1, 15, 'published'],
-      [6,  4, 'Defining a Class in Java',  'video', 'https://cdn.smis.edu/java-class.mp4',         null, 1, 18, 'published'],
-      [7,  5, 'Inheritance in Java',       'text',  null, 'Inheritance lets a child class extend a parent class...', 1, 10, 'published'],
-      [8,  6, 'Understanding Limits',      'pdf',   'https://cdn.smis.edu/limits.pdf',             null, 1, 20, 'published'],
-      [9,  7, 'Power Rule',                'video', 'https://cdn.smis.edu/power-rule.mp4',         null, 1, 12, 'published'],
-      [10, 8, 'Intro to NumPy',            'video', 'https://cdn.smis.edu/numpy.mp4',              null, 1, 20, 'published'],
-      [11, 9, 'Matplotlib Basics',         'video', 'https://cdn.smis.edu/matplotlib.mp4',         null, 1, 15, 'published'],
-      [12,10, 'Linear Regression',         'text',  null, 'Linear regression models the relationship between variables...', 1, 10, 'draft'],
+
+      // Module 1 – Getting Started with HTML
+      [1,  1, 'What is HTML?',
+        'video',
+        'https://www.youtube.com/watch?v=qz0aGYrrlhU',  // HTML Full Course – freeCodeCamp
+        null, 1, 10, 'published'],
+
+      [2,  1, 'HTML Document Structure',
+        'text',
+        null,
+        'An HTML document begins with <!DOCTYPE html> which tells the browser this is an HTML5 document.\n\nThe basic structure consists of:\n• <html> — the root element that wraps all content\n• <head> — contains meta information (title, charset, links to CSS)\n• <body> — contains all visible page content\n\nExample:\n<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8">\n    <title>My First Page</title>\n  </head>\n  <body>\n    <h1>Hello, World!</h1>\n    <p>This is a paragraph.</p>\n  </body>\n</html>\n\nKey points:\n1. Tags are case-insensitive but lowercase is the convention.\n2. Most tags come in pairs: an opening tag and a closing tag.\n3. Self-closing tags like <br> and <img> do not need a closing tag.',
+        2, 5, 'published'],
+
+      // Module 2 – Styling with CSS
+      [3,  2, 'Introduction to CSS',
+        'video',
+        'https://www.youtube.com/watch?v=OXGznpKZ_sA',  // CSS Full Course – freeCodeCamp
+        null, 1, 12, 'published'],
+
+      [4,  2, 'CSS Box Model',
+        'pdf',
+        'https://www.w3.org/TR/CSS2/box.html',           // W3C official CSS box model spec (publicly accessible)
+        null, 2, 8, 'published'],
+
+      // Module 3 – JavaScript Basics
+      [5,  3, 'Variables and Data Types',
+        'video',
+        'https://www.youtube.com/watch?v=W6NZfCO5SIk',  // JavaScript Tutorial for Beginners – Programming with Mosh
+        null, 1, 15, 'published'],
+
+      // Module 4 – Classes and Objects (Java)
+      [6,  4, 'Defining a Class in Java',
+        'video',
+        'https://www.youtube.com/watch?v=IUqKuGNasdM',  // Java OOP – Bro Code
+        null, 1, 18, 'published'],
+
+      // Module 5 – Inheritance and Polymorphism
+      [7,  5, 'Inheritance in Java',
+        'text',
+        null,
+        'Inheritance allows a child class to acquire the properties and methods of a parent class using the "extends" keyword.\n\nExample:\npublic class Animal {\n    String name;\n    public void speak() {\n        System.out.println("Some sound");\n    }\n}\n\npublic class Dog extends Animal {\n    @Override\n    public void speak() {\n        System.out.println("Woof!");\n    }\n}\n\nKey concepts:\n• super keyword — calls the parent class constructor or method\n• @Override annotation — signals that a method is overriding a parent method\n• Polymorphism — a Dog object can be referred to as an Animal reference\n\nAnimal myDog = new Dog();\nmyDog.speak(); // prints "Woof!" — runtime polymorphism in action\n\nInheritance promotes code reuse and establishes an "is-a" relationship between classes.',
+        1, 10, 'published'],
+
+      // Module 6 – Limits and Continuity
+      [8,  6, 'Understanding Limits',
+        'pdf',
+        'https://tutorial.math.lamar.edu/pdf/Calculus_Cheat_Sheet_Limits.pdf',  // Paul Dawkins Calculus Cheat Sheet – publicly hosted
+        null, 1, 20, 'published'],
+
+      // Module 7 – Differentiation
+      [9,  7, 'Power Rule',
+        'video',
+        'https://www.youtube.com/watch?v=IvLpN1G1Ncg',  // Derivatives – The Organic Chemistry Tutor
+        null, 1, 12, 'published'],
+
+      // Module 8 – Python for Data Science
+      [10, 8, 'Intro to NumPy',
+        'video',
+        'https://www.youtube.com/watch?v=QUT1VHiLmmI',  // NumPy Tutorial – freeCodeCamp
+        null, 1, 20, 'published'],
+
+      // Module 9 – Data Visualisation
+      [11, 9, 'Matplotlib Basics',
+        'video',
+        'https://www.youtube.com/watch?v=3Xc3CA655Y4',  // Matplotlib Tutorial – Corey Schafer
+        null, 1, 15, 'published'],
+
+      // Module 10 – Regression Models
+      [12, 10, 'Linear Regression',
+        'text',
+        null,
+        'Linear regression models the linear relationship between a dependent variable (y) and one or more independent variables (x).\n\nSimple Linear Regression formula:\n  y = mx + b\n  where m = slope, b = y-intercept\n\nIn Python with scikit-learn:\nfrom sklearn.linear_model import LinearRegression\nimport numpy as np\n\nX = np.array([[1],[2],[3],[4],[5]])\ny = np.array([2, 4, 5, 4, 5])\n\nmodel = LinearRegression()\nmodel.fit(X, y)\nprint("Slope:", model.coef_)\nprint("Intercept:", model.intercept_)\nprint("Prediction for x=6:", model.predict([[6]]))\n\nKey metrics to evaluate the model:\n• R² Score — how well the line fits the data (1.0 = perfect)\n• Mean Squared Error (MSE) — average squared difference between predicted and actual\n• Root MSE (RMSE) — same as MSE but in original units\n\nAssumptions of linear regression:\n1. Linearity — relationship between X and y is linear\n2. Independence — observations are independent\n3. Homoscedasticity — constant variance of errors\n4. Normality — residuals are normally distributed',
+        1, 10, 'draft'],
     ];
     for (const l of lessons) {
       await db.execute(
