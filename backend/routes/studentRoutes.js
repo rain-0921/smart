@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { uploadSubmission } = require('../middleware/upload');
+const { handlePhotoUpload } = require('../middleware/photoUpload');
 const s = require('../controllers/studentController');
 
 router.use(protect, authorize('student'));
 
 router.get('/dashboard',                    s.getDashboard);
 router.get('/profile',                      s.getProfile);
-router.put('/profile',                      s.updateProfile);
+router.put('/profile', handlePhotoUpload, s.updateProfile);
 router.get('/courses',                      s.getCourseCatalogue);
 router.post('/courses/enroll',              s.enrollCourse);
 router.get('/courses/:courseId/modules',    s.getCourseModules);
