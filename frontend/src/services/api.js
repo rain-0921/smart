@@ -50,7 +50,7 @@ export const adminDeleteNotification  = (id)    => API.delete(`/admin/notificati
 // Student
 export const studentGetDashboard    = ()           => API.get('/student/dashboard');
 export const studentGetProfile      = ()           => API.get('/student/profile');
-export const studentUpdateProfile   = (data)       => API.put('/student/profile', data);
+export const studentUpdateProfile   = (data)       => API.put('/student/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const studentGetCourses      = ()           => API.get('/student/courses');
 export const studentEnroll          = (data)       => API.post('/student/courses/enroll', data);
 export const studentGetModules      = (courseId)   => API.get(`/student/courses/${courseId}/modules`);
@@ -72,7 +72,7 @@ export const studentLogActivity    = (data)       => API.post('/student/log-acti
 // Instructor
 export const instrGetDashboard      = ()             => API.get('/instructor/dashboard');
 export const instrGetProfile        = ()             => API.get('/instructor/profile');
-export const instrUpdateProfile     = (data)         => API.put('/instructor/profile', data);
+export const instrUpdateProfile     = (data)         => API.put('/instructor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const instrGetCourses        = ()             => API.get('/instructor/courses');
 export const instrCreateCourse      = (data)         => API.post('/instructor/courses', data);
 export const instrUpdateCourse      = (id, data)     => API.put(`/instructor/courses/${id}`, data);

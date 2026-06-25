@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/authMiddleware');
+const { handlePhotoUpload } = require('../middleware/photoUpload');
 const i = require('../controllers/instructorController');
 
 router.use(protect, authorize('instructor'));
@@ -8,7 +9,7 @@ router.use(protect, authorize('instructor'));
 // Dashboard & Profile
 router.get('/dashboard',                         i.getDashboard);
 router.get('/profile',                           i.getProfile);
-router.put('/profile',                           i.updateProfile);
+router.put('/profile', handlePhotoUpload, i.updateProfile);
 
 // Courses
 router.get('/courses',                           i.getMyCourses);

@@ -68,10 +68,19 @@ exports.updateProfile = async (req, res) => {
   const { username, phone_number, department, specialization, subjects_taught, office_hours } = req.body;
   if (!username) return res.status(400).json({ message: 'Username is required' });
   try {
-    await db.execute(
-      `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
-      [username, phone_number||null, department||null, userId]
-    );
+    const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
+
+    if (photo_url) {
+      await db.execute(
+        `UPDATE user SET username=?, phone_number=?, department=?, photo_url=? WHERE user_id=?`,
+        [username, phone_number||null, department||null, photo_url, userId]
+      );
+    } else {
+      await db.execute(
+        `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
+        [username, phone_number||null, department||null, userId]
+      );
+    }
     await db.execute(
       `UPDATE instructor_profile SET specialization=?, subjects_taught=?, office_hours=?
        WHERE user_id=?`,
@@ -81,7 +90,7 @@ exports.updateProfile = async (req, res) => {
       `INSERT INTO activity_log (user_id, activity_type, description)
        VALUES (?, 'profile_update', 'Instructor updated their profile')`, [userId]
     );
-    res.json({ message: 'Profile updated successfully' });
+    res.json({ message: 'Profile updated successfully', photo_url: photo_url || undefined });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
