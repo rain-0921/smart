@@ -898,7 +898,7 @@ export default function StudentDashboard() {
                                 margin: selectedLesson?.lesson_id === l.lesson_id ? '0 -8px' : 0,
                               }}>
                                 <span style={{ fontSize: 16 }}>
-                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : '📝'}
+                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : l.content_type === 'text' ? '📝' : '📎'}
                                 </span>
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontWeight: 600, fontSize: 14 }}>{l.title}</div>
@@ -1009,7 +1009,7 @@ export default function StudentDashboard() {
                         </div>
                       )}
 
-                      {quizResult && !activeQuiz && (
+                          {quizResult && !activeQuiz && (
                         <div style={{ ...card, marginBottom: 20 }}>
                           <h3 style={{ marginTop: 0, fontFamily: "'DM Serif Display', serif" }}>Quiz Results</h3>
                           <div style={{
@@ -1020,6 +1020,11 @@ export default function StudentDashboard() {
                           </div>
                           <div style={{ textAlign: 'center', color: theme.textMuted, marginBottom: 20 }}>
                             {quizResult.totalScore} / {quizResult.totalPoints} points
+                            {quizResult.pendingReview > 0 && (
+                              <span style={{ marginLeft: 12, color: theme.accent4 }}>
+                                · {quizResult.pendingReview} question{quizResult.pendingReview > 1 ? 's' : ''} awaiting review
+                              </span>
+                            )}
                           </div>
                           {quizResult.overallFeedback && (
                             <div style={{
@@ -1030,26 +1035,49 @@ export default function StudentDashboard() {
                               📝 {quizResult.overallFeedback}
                             </div>
                           )}
-                          {quizResult.results.map((r, i) => (
-                            <div key={i} style={{
-                              padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
-                              background: r.is_correct ? 'rgba(52,211,153,0.08)' : 'rgba(251,113,133,0.08)',
-                              border: `1px solid ${r.is_correct ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.3)'}`
-                            }}>
-                              <div style={{ fontWeight: 600, fontSize: 14 }}>Q{i + 1}. {r.question_text}</div>
-                              <div style={{ fontSize: 12, marginTop: 4 }}>
-                                Your answer: <strong>{r.user_answer || '(no answer)'}</strong>
-                              </div>
-                              {!r.is_correct && r.correct_answer &&
-                                <div style={{ fontSize: 12, color: theme.accent3 }}>
-                                  Correct: <strong>{r.correct_answer}</strong>
+                          {quizResult.results.map((r, i) => {
+                            const isPending = r.is_correct === null || r.is_correct === undefined;
+                            const isCorrect = r.is_correct === true;
+                            const bg = isPending
+                              ? 'rgba(251,176,64,0.10)'
+                              : (isCorrect ? 'rgba(52,211,153,0.08)' : 'rgba(251,113,133,0.08)');
+                            const border = isPending
+                              ? 'rgba(251,176,64,0.35)'
+                              : (isCorrect ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.3)');
+                            return (
+                              <div key={i} style={{
+                                padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
+                                background: bg, border: `1px solid ${border}`
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14 }}>
+                                  <span>Q{i + 1}. {r.question_text}</span>
+                                  {isPending && (
+                                    <span style={{
+                                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                                      background: 'rgba(251,176,64,0.20)', color: '#a06400'
+                                    }}>
+                                      ⏳ PENDING REVIEW
+                                    </span>
+                                  )}
                                 </div>
-                              }
-                              <div style={{ fontSize: 12, color: r.is_correct ? theme.accent3 : theme.accent5, marginTop: 4 }}>
-                                💡 {r.feedback}
+                                <div style={{ fontSize: 12, marginTop: 4 }}>
+                                  Your answer: <strong>{r.user_answer || '(no answer)'}</strong>
+                                </div>
+                                {!isPending && !isCorrect && r.correct_answer &&
+                                  <div style={{ fontSize: 12, color: theme.accent3 }}>
+                                    Correct: <strong>{r.correct_answer}</strong>
+                                  </div>
+                                }
+                                <div style={{
+                                  fontSize: 12,
+                                  color: isPending ? '#a06400' : (isCorrect ? theme.accent3 : theme.accent5),
+                                  marginTop: 4
+                                }}>
+                                  {isPending ? '⏳' : '💡'} {r.feedback}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                           <button style={{ ...btnGhost, marginTop: 12 }} onClick={() => setQuizResult(null)}>
                             Close Results
                           </button>
@@ -1075,7 +1103,8 @@ export default function StudentDashboard() {
                                 }}>
                                   {selectedLesson.content_type === 'video' ? '🎬 Video'
                                     : selectedLesson.content_type === 'pdf' ? '📄 PDF'
-                                    : '📝 Reading'}
+                                    : selectedLesson.content_type === 'text' ? '📝 Reading'
+                                    : '📎 Material'}
                                 </span>
                                 {selectedLesson.duration_minutes && (
                                   <span style={{ fontSize: 11, color: theme.textDim }}>
@@ -1194,6 +1223,30 @@ export default function StudentDashboard() {
                               fontFamily: fontBody,
                             }}>
                               {selectedLesson.content_text}
+                            </div>
+                          )}
+
+                          {/* OTHER uploaded material (DOC/DOCX/PPT/PPTX/image) — offer download */}
+                          {selectedLesson.content_type === 'other' && selectedLesson.content_url && (
+                            <div style={{
+                              padding: 24, borderRadius: theme.radiusSm, textAlign: 'center',
+                              background: theme.surface2, border: `1px solid ${theme.border}`
+                            }}>
+                              <div style={{ fontSize: 40, marginBottom: 8 }}>
+                                {selectedLesson.content_url.match(/\.(jpe?g|png|gif)$/i) ? '🖼️' : '📎'}
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Attached material</div>
+                              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
+                                Click below to open or download the file.
+                              </div>
+                              <a
+                                href={selectedLesson.content_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none' }}
+                              >
+                                Open material ↗
+                              </a>
                             </div>
                           )}
 
@@ -1595,27 +1648,46 @@ export default function StudentDashboard() {
                 </div>
               )}
               <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
-                {gradeDetail.answers?.map((a, i) => (
-                  <div key={a.answer_id} style={{ padding: '10px 0', borderBottom: `1px solid ${theme.border}` }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Q{i + 1}. {a.question_text}</div>
-                    <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 2 }}>
-                      Your answer: <strong style={{ color: theme.text }}>{a.user_answer || '(no answer)'}</strong>
-                    </div>
-                    {a.correct_answer && !a.is_correct && (
-                      <div style={{ fontSize: 12, color: theme.accent3, marginBottom: 2 }}>
-                        Correct: <strong>{a.correct_answer}</strong>
+                {gradeDetail.answers?.map((a, i) => {
+                  const isPending = a.is_correct === null || a.is_correct === undefined;
+                  const isCorrect = a.is_correct === true;
+                  return (
+                    <div key={a.answer_id} style={{ padding: '10px 0', borderBottom: `1px solid ${theme.border}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                        <span>Q{i + 1}. {a.question_text}</span>
+                        {isPending && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                            background: 'rgba(251,176,64,0.20)', color: '#a06400'
+                          }}>
+                            ⏳ PENDING REVIEW
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <div style={{ fontSize: 12, color: a.is_correct ? theme.accent3 : theme.accent5, marginBottom: 2 }}>
-                      {a.is_correct ? '✓ Correct' : '✗ Incorrect'} · {a.score_awarded ?? 0}/{a.max_points} pts
-                    </div>
-                    {a.auto_feedback && (
-                      <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, background: theme.surface2, padding: '6px 10px', borderRadius: 6 }}>
-                        💡 {a.auto_feedback}
+                      <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 2 }}>
+                        Your answer: <strong style={{ color: theme.text }}>{a.user_answer || '(no answer)'}</strong>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {!isPending && a.correct_answer && !isCorrect && (
+                        <div style={{ fontSize: 12, color: theme.accent3, marginBottom: 2 }}>
+                          Correct: <strong>{a.correct_answer}</strong>
+                        </div>
+                      )}
+                      <div style={{
+                        fontSize: 12,
+                        color: isPending ? '#a06400' : (isCorrect ? theme.accent3 : theme.accent5),
+                        marginBottom: 2
+                      }}>
+                        {isPending ? '⏳ Awaiting instructor review' : (isCorrect ? '✓ Correct' : '✗ Incorrect')}
+                        {' · '}{a.score_awarded ?? 0}/{a.max_points} pts
+                      </div>
+                      {a.auto_feedback && (
+                        <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, background: theme.surface2, padding: '6px 10px', borderRadius: 6 }}>
+                          💡 {a.auto_feedback}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}

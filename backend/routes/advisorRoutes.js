@@ -14,6 +14,7 @@ router.get('/students/:studentId',              a.getStudentDetail);
 router.get('/students/:studentId/grades',       a.getStudentGrades);
 router.get('/progress',                         a.getStudentProgress);
 router.get('/reports',                          a.generateReport);
+router.get('/reports/export',                    a.exportReport);
 router.get('/notifications',                    a.getNotifications);
 router.patch('/notifications/:id/read',         a.markNotificationRead);
 

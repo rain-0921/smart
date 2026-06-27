@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, Legend
+} from 'recharts';
 import {
   instrGetDashboard, instrGetProfile, instrUpdateProfile,
   instrGetCourses, instrCreateCourse, instrUpdateCourse, instrDeleteCourse,
   instrGetModules, instrCreateModule, instrDeleteModule,
   instrCreateLesson, instrDeleteLesson,
   instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrDeleteQuiz,
-  instrGetQuestions, instrAddQuestion, instrDeleteQuestion,
+  instrGetQuestions, instrAddQuestion, instrUpdateQuestion, instrDeleteQuestion,
   instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
-  instrGetStudents, instrGetPending, instrGradeSubmission,
+  instrGetStudents, instrExportStudents, instrGetStudentDetail, instrGetPending, instrGradeSubmission,
   instrGetAnalytics, instrGetNotifications, instrMarkRead
 } from '../services/api';
 
@@ -110,7 +115,7 @@ function Badge({ count }) {
   );
 }
 
-function StatCard({ label, value, mono }) {
+function StatCard({ label, value, mono, sub }) {
   return (
     <div className="ins-card" style={{ background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: '20px 24px' }}>
       <div style={{ fontSize: 11, color: token.inkFaint, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontFamily: fontBody }}>
@@ -119,6 +124,7 @@ function StatCard({ label, value, mono }) {
       <div style={{ fontSize: 32, fontWeight: 700, color: token.brass, fontFamily: mono ? fontMono : fontDisplay, lineHeight: 1 }}>
         {value ?? '—'}
       </div>
+      {sub && <div style={{ fontSize: 11, color: token.inkSoft, marginTop: 6, fontFamily: fontMono }}>{sub}</div>}
     </div>
   );
 }
@@ -177,6 +183,7 @@ export default function InstructorDashboard() {
   const [students, setStudents] = useState([]);
   const [pending, setPending] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [analyticsRange, setAnalyticsRange] = useState({ from: '', to: '' });
   const [notifications, setNotifications] = useState([]);
 
   // Selected context
@@ -197,11 +204,13 @@ export default function InstructorDashboard() {
   const [editingQuiz, setEditingQuiz] = useState(null);
   const [editingFeedback, setEditingFeedback] = useState(null);
   const [gradingItem, setGradingItem] = useState(null);
+  const [studentDetail, setStudentDetail] = useState(null);
+  const [studentDetailLoading, setStudentDetailLoading] = useState(false);
 
   // Forms
   const blankCourse   = { title: '', description: '', status: 'draft' };
   const blankModule  = { title: '', description: '' };
-  const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '' };
+  const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '', file: null };
   const blankQuiz    = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', status: 'draft' };
   const blankQ       = { question_type: 'mcq', question_text: '', options: ['', '', '', ''], correct_answer: '', points: 1, improvement_tip: '' };
   const blankGrade   = { score: '', feedback: '' };
@@ -213,6 +222,7 @@ export default function InstructorDashboard() {
   const [lessonForm, setLessonForm]   = useState(blankLesson);
   const [quizForm, setQuizForm]       = useState(blankQuiz);
   const [qForm, setQForm]             = useState(blankQ);
+  const [editingQuestionId, setEditingQuestionId] = useState(null);
   const [gradeForm, setGradeForm]     = useState(blankGrade);
   const [profileForm, setProfileForm]  = useState(blankProfile);
   const [feedbackForm, setFeedbackForm]= useState(blankFeedback);
@@ -244,8 +254,16 @@ export default function InstructorDashboard() {
     setQuizzes(q.data);
     if (course.course_id) {
       instrGetStudents(course.course_id).then(r => setStudents(r.data)).catch(() => {});
-      instrGetAnalytics(course.course_id).then(r => setAnalytics(r.data)).catch(() => {});
+      loadAnalytics(course.course_id, analyticsRange);
     }
+  };
+
+  // Re-fetch analytics when the date range changes.
+  const loadAnalytics = (courseId, range) => {
+    const params = {};
+    if (range.from) params.from = range.from;
+    if (range.to)   params.to   = range.to;
+    instrGetAnalytics(courseId, params).then(r => setAnalytics(r.data)).catch(() => {});
   };
 
   // ── Open quiz questions ──
@@ -306,7 +324,22 @@ export default function InstructorDashboard() {
   // ── LESSON CRUD ──
   const saveLesson = async () => {
     try {
-      await instrCreateLesson(selectedModule.module_id, lessonForm);
+      if (lessonForm.file) {
+        // File upload: send multipart/form-data, let the backend infer content_type.
+        const fd = new FormData();
+        fd.append('title', lessonForm.title);
+        fd.append('duration_minutes', lessonForm.duration_minutes || '');
+        fd.append('file', lessonForm.file);
+        // Use axios directly so we can pass FormData without api.js wrapper changes.
+        const token = localStorage.getItem('token');
+        await axios.post(
+          `http://localhost:5000/api/instructor/modules/${selectedModule.module_id}/lessons`,
+          fd,
+          { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' } }
+        );
+      } else {
+        await instrCreateLesson(selectedModule.module_id, lessonForm);
+      }
       showAlert('Lesson added.');
       setShowLessonModal(false);
       instrGetModules(selectedCourse.course_id).then(r => setModules(r.data));
@@ -356,11 +389,42 @@ export default function InstructorDashboard() {
       } else {
         payload.options = null;
       }
-      await instrAddQuestion(selectedQuiz.quiz_id, payload);
-      showAlert('Question added.');
+      if (editingQuestionId) {
+        // Updating existing question (typically used to revise the improvement_tip
+        // after the quiz has been attempted).
+        await instrUpdateQuestion(editingQuestionId, payload);
+        showAlert('Question updated.');
+      } else {
+        await instrAddQuestion(selectedQuiz.quiz_id, payload);
+        showAlert('Question added.');
+      }
       setShowQModal(false);
+      setEditingQuestionId(null);
       instrGetQuestions(selectedQuiz.quiz_id).then(r => setQuestions(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
+
+  const openEditQuestion = (qs) => {
+    setEditingQuestionId(qs.question_id);
+    let parsedOptions = ['', '', '', ''];
+    if (qs.options) {
+      try {
+        const arr = typeof qs.options === 'string' ? JSON.parse(qs.options) : qs.options;
+        if (Array.isArray(arr)) {
+          // Pad/truncate to 4 slots for the form.
+          parsedOptions = [arr[0] || '', arr[1] || '', arr[2] || '', arr[3] || ''];
+        }
+      } catch {}
+    }
+    setQForm({
+      question_type: qs.question_type,
+      question_text: qs.question_text,
+      options: parsedOptions,
+      correct_answer: qs.correct_answer || '',
+      points: qs.points,
+      improvement_tip: qs.improvement_tip || ''
+    });
+    setShowQModal(true);
   };
 
   const deleteQuestion = async (questionId) => {
@@ -370,6 +434,37 @@ export default function InstructorDashboard() {
       showAlert('Question deleted.');
       instrGetQuestions(selectedQuiz.quiz_id).then(r => setQuestions(r.data));
     } catch { showAlert('Failed', 'error'); }
+  };
+
+  // ── STUDENT DETAIL + EXPORT ──
+  const openStudentDetail = async (studentId) => {
+    setStudentDetail(null);
+    setStudentDetailLoading(true);
+    try {
+      const res = await instrGetStudentDetail(studentId);
+      setStudentDetail(res.data);
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Failed to load student', 'error');
+    } finally {
+      setStudentDetailLoading(false);
+    }
+  };
+
+  const exportStudentsCsv = async () => {
+    try {
+      const res = await instrExportStudents(selectedCourse.course_id);
+      const blob = new Blob([res.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `course_${selectedCourse.course_id}_students_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to export: ' + (err.response?.data?.message || err.message));
+    }
   };
 
   // ── QUIZ FEEDBACK CRUD ──
@@ -772,16 +867,31 @@ export default function InstructorDashboard() {
                               {/* Questions */}
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                                 <span style={{ fontSize: 12, fontWeight: 600, color: token.ink }}>Questions ({questions.length})</span>
-                                <button className="ins-btn" onClick={() => { setQForm(blankQ); setShowQModal(true); }}
+                                <button className="ins-btn" onClick={() => { setEditingQuestionId(null); setQForm(blankQ); setShowQModal(true); }}
                                   style={{ background: token.brass, color: '#fff', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
                                   + Add
                                 </button>
                               </div>
                               {questions.map((qs, i) => (
-                                <div key={qs.question_id} style={{ fontSize: 12, padding: '5px 0', borderBottom: `1px solid ${token.line}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', color: token.inkSoft }}>
-                                  <div><span style={{ color: token.inkFaint }}>Q{i + 1}.</span> {qs.question_text}</div>
-                                  <button className="ins-btn" onClick={() => deleteQuestion(qs.question_id)}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: token.danger, fontSize: 11, padding: '0 4px', flexShrink: 0 }}>✕</button>
+                                <div key={qs.question_id} style={{ fontSize: 12, padding: '8px 0', borderBottom: `1px solid ${token.line}`, color: token.inkSoft }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                      <span style={{ color: token.inkFaint }}>Q{i + 1}.</span> {qs.question_text}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                      <button className="ins-btn" onClick={() => openEditQuestion(qs)}
+                                        style={{ background: 'none', border: `1px solid ${token.line}`, borderRadius: 4, padding: '1px 6px', cursor: 'pointer', fontSize: 11, color: token.inkSoft }}>
+                                        Edit
+                                      </button>
+                                      <button className="ins-btn" onClick={() => deleteQuestion(qs.question_id)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: token.danger, fontSize: 11, padding: '1px 4px' }}>✕</button>
+                                    </div>
+                                  </div>
+                                  {qs.improvement_tip && (
+                                    <div style={{ marginTop: 3, fontSize: 11, color: token.brass, paddingLeft: 18 }}>
+                                      💡 {qs.improvement_tip}
+                                    </div>
+                                  )}
                                 </div>
                               ))}
 
@@ -826,7 +936,23 @@ export default function InstructorDashboard() {
 
                   {/* Students */}
                   <div className="ins-card" style={{ gridColumn: '1 / -1', background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: 22 }}>
-                    <h4 style={{ margin: '0 0 16px 0', fontFamily: fontDisplay, fontSize: 16, color: token.ink }}>Enrolled Students</h4>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                      <h4 style={{ margin: 0, fontFamily: fontDisplay, fontSize: 16, color: token.ink }}>Enrolled Students</h4>
+                      <button onClick={exportStudentsCsv} disabled={students.length === 0}
+                        style={{
+                          padding: '7px 12px', fontSize: 12, fontWeight: 600,
+                          cursor: students.length === 0 ? 'not-allowed' : 'pointer',
+                          border: `1px solid ${token.line}`, borderRadius: 6,
+                          background: students.length === 0 ? token.surface2 : token.ink,
+                          color: students.length === 0 ? token.inkFaint : '#fff',
+                          display: 'inline-flex', alignItems: 'center', gap: 6
+                        }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" />
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
                     {students.length === 0
                       ? <p style={{ color: token.inkFaint, fontSize: 13 }}>No enrolled students yet.</p>
                       : (
@@ -841,7 +967,12 @@ export default function InstructorDashboard() {
                             </thead>
                             <tbody>
                               {students.map(s => (
-                                <tr key={s.user_id} className="ins-table-row" style={{ borderTop: `1px solid ${token.line}` }}>
+                                <tr key={s.user_id}
+                                  onClick={() => openStudentDetail(s.user_id)}
+                                  title="Click to view full progress"
+                                  style={{ borderTop: `1px solid ${token.line}`, cursor: 'pointer' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = token.surface2}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                                   <td style={{ padding: '10px 12px', color: token.ink, fontWeight: 500 }}>{s.username}</td>
                                   <td style={{ padding: '10px 12px', color: token.inkSoft }}>{s.email}</td>
                                   <td style={{ padding: '10px 12px', minWidth: 120 }}>
@@ -872,13 +1003,124 @@ export default function InstructorDashboard() {
                   {/* Analytics */}
                   {analytics && (
                     <div className="ins-card" style={{ gridColumn: '1 / -1', background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: 22 }}>
-                      <h4 style={{ margin: '0 0 16px 0', fontFamily: fontDisplay, fontSize: 16, color: token.ink }}>Course Analytics</h4>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+                        <h4 style={{ margin: 0, fontFamily: fontDisplay, fontSize: 16, color: token.ink }}>Course Analytics</h4>
+                        {/* Date range filter */}
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <label style={{ fontSize: 11, color: token.inkSoft, fontWeight: 600 }}>From</label>
+                          <input type="date" value={analyticsRange.from}
+                            onChange={e => setAnalyticsRange(r => ({ ...r, from: e.target.value }))}
+                            style={{ padding: '6px 10px', fontSize: 12, border: `1px solid ${token.line}`, borderRadius: 6, background: token.surface2, color: token.ink, fontFamily: fontMono }} />
+                          <label style={{ fontSize: 11, color: token.inkSoft, fontWeight: 600 }}>To</label>
+                          <input type="date" value={analyticsRange.to}
+                            onChange={e => setAnalyticsRange(r => ({ ...r, to: e.target.value }))}
+                            style={{ padding: '6px 10px', fontSize: 12, border: `1px solid ${token.line}`, borderRadius: 6, background: token.surface2, color: token.ink, fontFamily: fontMono }} />
+                          <button onClick={() => loadAnalytics(selectedCourse.course_id, analyticsRange)}
+                            style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, background: token.brass, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                            Apply
+                          </button>
+                          <button onClick={() => { setAnalyticsRange({ from: '', to: '' }); loadAnalytics(selectedCourse.course_id, { from: '', to: '' }); }}
+                            style={{ padding: '6px 10px', fontSize: 12, background: 'none', color: token.inkSoft, border: `1px solid ${token.line}`, borderRadius: 6, cursor: 'pointer' }}>
+                            Reset
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Stat cards */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
                         <StatCard label="Completed" value={analytics.completed} />
                         <StatCard label="Total Enrolled" value={analytics.total} />
                         <StatCard label="Completion Rate"
                           value={analytics.total > 0 ? `${Math.round(analytics.completed / analytics.total * 100)}%` : '0%'} />
+                        <StatCard label="Submission Rate"
+                          value={`${analytics.submissionRate?.pct ?? 0}%`}
+                          sub={analytics.submissionRate ? `${analytics.submissionRate.submitted}/${analytics.submissionRate.active} students` : ''} />
                       </div>
+
+                      {/* Charts grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 22 }}>
+                        {/* Bar chart: avg score per quiz */}
+                        <div style={{ background: token.paper, border: `1px solid ${token.line}`, borderRadius: 10, padding: 16 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: token.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+                            Average Quiz Score
+                          </div>
+                          {analytics.quizStats.length === 0 || analytics.quizStats.every(q => Number(q.attempts) === 0) ? (
+                            <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: token.inkFaint, fontSize: 12 }}>
+                              No quiz attempts in this range
+                            </div>
+                          ) : (
+                            <ResponsiveContainer width="100%" height={220}>
+                              <BarChart data={analytics.quizStats.map(q => ({ name: q.title.length > 14 ? q.title.slice(0, 14) + '…' : q.title, score: parseFloat(parseFloat(q.avg_score).toFixed(1)) }))}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={token.line} />
+                                <XAxis dataKey="name" tick={{ fontSize: 10, fill: token.inkSoft }} interval={0} angle={-15} textAnchor="end" height={50} />
+                                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: token.inkSoft }} />
+                                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${token.line}` }} />
+                                <Bar dataKey="score" fill={token.brass} radius={[6, 6, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          )}
+                        </div>
+
+                        {/* Line chart: enrollment trend */}
+                        <div style={{ background: token.paper, border: `1px solid ${token.line}`, borderRadius: 10, padding: 16 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: token.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+                            Enrollment Trend
+                          </div>
+                          {analytics.enrollmentTrend.length === 0 ? (
+                            <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: token.inkFaint, fontSize: 12 }}>
+                              No enrollment data in this range
+                            </div>
+                          ) : (
+                            <ResponsiveContainer width="100%" height={220}>
+                              <LineChart data={analytics.enrollmentTrend}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={token.line} />
+                                <XAxis dataKey="date" tick={{ fontSize: 10, fill: token.inkSoft }} />
+                                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: token.inkSoft }} />
+                                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${token.line}` }} />
+                                <Line type="monotone" dataKey="count" stroke={token.brass} strokeWidth={2.5} dot={{ r: 4, fill: token.brass }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Score distribution (full-width pie) */}
+                      <div style={{ background: token.paper, border: `1px solid ${token.line}`, borderRadius: 10, padding: 16, marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: token.inkSoft, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+                          Score Distribution (graded attempts)
+                        </div>
+                        {analytics.scoreDistribution.every(b => b.count === 0) ? (
+                          <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: token.inkFaint, fontSize: 12 }}>
+                            No graded attempts in this range
+                          </div>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={220}>
+                            <PieChart>
+                              <Pie
+                                data={analytics.scoreDistribution}
+                                dataKey="count"
+                                nameKey="bucket"
+                                cx="50%"
+                                cy="50%"
+                                outerRadius={80}
+                                label={({ bucket, count }) => `${bucket}: ${count}`}
+                                labelLine={false}
+                              >
+                                {analytics.scoreDistribution.map((entry, i) => (
+                                  <Cell key={i} fill={['#B3261E', '#D97706', '#A9792C', '#1F7A4D', '#2454A6'][i]} />
+                                ))}
+                              </Pie>
+                              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${token.line}` }} />
+                              <Legend wrapperStyle={{ fontSize: 11 }} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      {/* Per-quiz table */}
+                      <h5 style={{ margin: '18px 0 8px 0', fontFamily: fontDisplay, fontSize: 13, color: token.ink, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                        Per-Quiz Breakdown
+                      </h5>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                         <thead>
                           <tr>
@@ -888,15 +1130,17 @@ export default function InstructorDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {analytics.quizStats.map((q, i) => (
-                            <tr key={i} className="ins-table-row" style={{ borderTop: `1px solid ${token.line}` }}>
-                              <td style={{ padding: '10px 12px', color: token.ink, fontWeight: 500 }}>{q.title}</td>
-                              <td style={{ padding: '10px 12px', fontFamily: fontMono, fontWeight: 700, color: q.avg_score >= 70 ? token.good : q.avg_score >= 50 ? token.warn : token.danger }}>
-                                {parseFloat(q.avg_score || 0).toFixed(1)}%
-                              </td>
-                              <td style={{ padding: '10px 12px', fontFamily: fontMono, color: token.inkSoft }}>{q.attempts}</td>
-                            </tr>
-                          ))}
+                          {analytics.quizStats.length === 0
+                            ? <tr><td colSpan={3} style={{ padding: 20, color: token.inkFaint, fontSize: 12, textAlign: 'center' }}>No quizzes yet.</td></tr>
+                            : analytics.quizStats.map((q, i) => (
+                              <tr key={i} style={{ borderTop: `1px solid ${token.line}` }}>
+                                <td style={{ padding: '10px 12px', color: token.ink, fontWeight: 500 }}>{q.title}</td>
+                                <td style={{ padding: '10px 12px', fontFamily: fontMono, fontWeight: 700, color: q.avg_score >= 70 ? token.good : q.avg_score >= 50 ? token.warn : token.danger }}>
+                                  {parseFloat(q.avg_score || 0).toFixed(1)}%
+                                </td>
+                                <td style={{ padding: '10px 12px', fontFamily: fontMono, color: token.inkSoft }}>{q.attempts}</td>
+                              </tr>
+                            ))}
                         </tbody>
                       </table>
                     </div>
@@ -1035,10 +1279,14 @@ export default function InstructorDashboard() {
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Content Type</label>
             <select className="ins-select" style={{ width: '100%', background: token.surface2, border: `1px solid ${token.line}`, borderRadius: 8, padding: '10px 14px', color: token.ink, fontSize: 13, fontFamily: fontBody, outline: 'none', boxSizing: 'border-box' }}
-              value={lessonForm.content_type} onChange={e => setLessonForm({ ...lessonForm, content_type: e.target.value })}>
-              {['text', 'video', 'pdf', 'other'].map(t => <option key={t} value={t}>{t}</option>)}
+              value={lessonForm.content_type} onChange={e => setLessonForm({ ...lessonForm, content_type: e.target.value, file: null })}>
+              <option value="text">Text content (lesson body)</option>
+              <option value="video">Video URL (YouTube, Vimeo, etc.)</option>
+              <option value="pdf">PDF URL (link to hosted PDF)</option>
+              <option value="other">Upload material file (DOC, PPT, image, video)</option>
             </select>
           </div>
+
           {(lessonForm.content_type === 'video' || lessonForm.content_type === 'pdf') && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Content URL</label>
@@ -1046,6 +1294,27 @@ export default function InstructorDashboard() {
                 value={lessonForm.content_url} placeholder="https://..." onChange={e => setLessonForm({ ...lessonForm, content_url: e.target.value })} />
             </div>
           )}
+
+          {lessonForm.content_type === 'other' && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Upload Material File</label>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.webm,.mov,.jpg,.jpeg,.png,.gif"
+                onChange={e => setLessonForm({ ...lessonForm, file: e.target.files?.[0] || null })}
+                style={{ width: '100%', background: token.surface2, border: `1px solid ${token.line}`, borderRadius: 8, padding: '8px 12px', color: token.ink, fontSize: 13, fontFamily: fontBody, outline: 'none', boxSizing: 'border-box' }}
+              />
+              {lessonForm.file && (
+                <div style={{ fontSize: 11, color: token.inkSoft, marginTop: 6 }}>
+                  Selected: <strong>{lessonForm.file.name}</strong> ({Math.round(lessonForm.file.size / 1024)} KB)
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: token.inkFaint, marginTop: 6 }}>
+                Accepted: PDF, DOC/DOCX, PPT/PPTX, MP4/WEBM/MOV, JPG/PNG/GIF · Max 50MB
+              </div>
+            </div>
+          )}
+
           {lessonForm.content_type === 'text' && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Content Text</label>
@@ -1120,7 +1389,7 @@ export default function InstructorDashboard() {
 
       {/* Question */}
       {showQModal && (
-        <Modal title="Add Question" onClose={() => setShowQModal(false)} wide>
+        <Modal title={editingQuestionId ? 'Edit Question (revise feedback tip)' : 'Add Question'} onClose={() => { setShowQModal(false); setEditingQuestionId(null); }} wide>
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Question Type</label>
             <select className="ins-select" style={{ width: '100%', background: token.surface2, border: `1px solid ${token.line}`, borderRadius: 8, padding: '10px 14px', color: token.ink, fontSize: 13, fontFamily: fontBody, outline: 'none', boxSizing: 'border-box' }}
@@ -1155,14 +1424,20 @@ export default function InstructorDashboard() {
                 value={qForm.points} onChange={e => setQForm({ ...qForm, points: e.target.value })} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>Improvement Tip</label>
-              <input className="ins-input" style={{ width: '100%', background: token.surface2, border: `1px solid ${token.line}`, borderRadius: 8, padding: '10px 14px', color: token.ink, fontSize: 13, fontFamily: fontBody, outline: 'none', boxSizing: 'border-box' }}
-                value={qForm.improvement_tip} placeholder="Hint for wrong answers" onChange={e => setQForm({ ...qForm, improvement_tip: e.target.value })} />
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: token.inkSoft, marginBottom: 6 }}>
+                Improvement Tip
+                <span style={{ marginLeft: 8, fontSize: 10, color: (qForm.improvement_tip || '').length > 500 ? token.danger : token.inkFaint, fontWeight: 400 }}>
+                  {(qForm.improvement_tip || '').length}/500
+                </span>
+              </label>
+              <textarea className="ins-input" style={{ width: '100%', background: token.surface2, border: `1px solid ${(qForm.improvement_tip || '').length > 500 ? token.danger : token.line}`, borderRadius: 8, padding: '10px 14px', color: token.ink, fontSize: 13, fontFamily: fontBody, outline: 'none', boxSizing: 'border-box', height: 60, resize: 'vertical' }}
+                value={qForm.improvement_tip} placeholder="Shown to students when they answer incorrectly"
+                onChange={e => { if (e.target.value.length <= 500) setQForm({ ...qForm, improvement_tip: e.target.value }); }} />
             </div>
           </div>
           <button className="ins-btn" onClick={saveQuestion}
             style={{ width: '100%', background: token.brass, color: '#fff', border: 'none', borderRadius: 8, padding: '11px 18px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            Add Question
+            {editingQuestionId ? 'Save Changes' : 'Add Question'}
           </button>
         </Modal>
       )}
@@ -1274,6 +1549,135 @@ export default function InstructorDashboard() {
             style={{ width: '100%', background: token.brass, color: '#fff', border: 'none', borderRadius: 8, padding: '11px 18px', cursor: 'pointer', fontSize: 13, fontWeight: 600, marginTop: 6 }}>
             Save Profile
           </button>
+        </Modal>
+      )}
+
+      {/* Student Detail (drill-down) */}
+      {(studentDetail || studentDetailLoading) && (
+        <Modal title={studentDetail ? `${studentDetail.profile.username} — Progress` : 'Loading…'} wide onClose={() => { setStudentDetail(null); setStudentDetailLoading(false); }}>
+          {studentDetailLoading ? (
+            <div style={{ padding: 30, textAlign: 'center', color: token.inkFaint }}>Loading student progress…</div>
+          ) : (
+            <>
+              {/* Header card */}
+              <div style={{ background: token.surface2, padding: 16, borderRadius: 10, marginBottom: 18, border: `1px solid ${token.line}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: token.ink, fontFamily: fontDisplay }}>
+                      {studentDetail.profile.username}
+                    </div>
+                    <div style={{ fontSize: 12, color: token.inkSoft, marginTop: 2 }}>{studentDetail.profile.email}</div>
+                    <div style={{ fontSize: 12, color: token.inkSoft, marginTop: 6 }}>
+                      {studentDetail.profile.programme || '—'}
+                      {studentDetail.profile.academic_level && ` · ${studentDetail.profile.academic_level}`}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>GPA</div>
+                      <div style={{ fontFamily: fontDisplay, fontSize: 22, color: token.ink, fontWeight: 700 }}>
+                        {studentDetail.profile.gpa != null ? Number(studentDetail.profile.gpa).toFixed(2) : '—'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>Standing</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: studentDetail.profile.is_at_risk ? token.danger : token.good, marginTop: 6 }}>
+                        {studentDetail.profile.is_at_risk ? '⚠ At risk' : '✓ On track'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>Quizzes</div>
+                      <div style={{ fontFamily: fontDisplay, fontSize: 22, color: token.ink, fontWeight: 700 }}>{studentDetail.quizAttempts.length}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Courses in this instructor's courses */}
+              <h4 style={{ margin: '0 0 8px 0', fontFamily: fontDisplay, fontSize: 14, color: token.ink }}>Courses (your courses)</h4>
+              {studentDetail.courses.length === 0
+                ? <p style={{ color: token.inkFaint, fontSize: 12 }}>Not enrolled in any of your courses.</p>
+                : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 18 }}>
+                    <thead>
+                      <tr>
+                        {['Course', 'Status', 'Completion', 'Enrolled'].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: token.inkFaint, textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.6, borderBottom: `1px solid ${token.line}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {studentDetail.courses.map(c => (
+                        <tr key={c.course_id} style={{ borderTop: `1px solid ${token.line}` }}>
+                          <td style={{ padding: '8px 10px', color: token.ink, fontWeight: 500 }}>{c.title}</td>
+                          <td style={{ padding: '8px 10px', color: token.inkSoft, textTransform: 'capitalize' }}>{c.enrollment_status}</td>
+                          <td style={{ padding: '8px 10px', fontFamily: fontMono, color: token.ink }}>{parseFloat(c.completion_percent || 0).toFixed(1)}%</td>
+                          <td style={{ padding: '8px 10px', fontFamily: fontMono, color: token.inkSoft, fontSize: 11 }}>{new Date(c.enrolled_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+              {/* Quiz attempts */}
+              <h4 style={{ margin: '0 0 8px 0', fontFamily: fontDisplay, fontSize: 14, color: token.ink }}>Quiz attempts ({studentDetail.quizAttempts.length})</h4>
+              {studentDetail.quizAttempts.length === 0
+                ? <p style={{ color: token.inkFaint, fontSize: 12, marginBottom: 18 }}>No quiz attempts yet.</p>
+                : (
+                  <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 18, border: `1px solid ${token.line}`, borderRadius: 8 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ background: token.surface2 }}>
+                          {['Quiz', 'Course', 'Type', 'Score', 'Status', 'Date'].map(h => (
+                            <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: token.inkFaint, textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.6 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {studentDetail.quizAttempts.map(qa => (
+                          <tr key={qa.quiz_attempt_id} style={{ borderTop: `1px solid ${token.line}` }}>
+                            <td style={{ padding: '8px 10px', color: token.ink }}>{qa.quiz_title}</td>
+                            <td style={{ padding: '8px 10px', color: token.inkSoft }}>{qa.course_title}</td>
+                            <td style={{ padding: '8px 10px', color: token.inkSoft, fontSize: 11 }}>{qa.submission_type.replace('_', ' ')}</td>
+                            <td style={{ padding: '8px 10px', fontFamily: fontMono, fontWeight: 700, color: qa.score >= 70 ? token.good : qa.score >= 50 ? token.warn : token.danger }}>
+                              {qa.score != null ? `${parseFloat(qa.score).toFixed(1)}%` : '—'}
+                            </td>
+                            <td style={{ padding: '8px 10px', color: token.inkSoft, textTransform: 'capitalize' }}>{qa.status.replace('_', ' ')}</td>
+                            <td style={{ padding: '8px 10px', fontFamily: fontMono, color: token.inkFaint, fontSize: 11 }}>{new Date(qa.created_at).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+              {/* File submissions */}
+              <h4 style={{ margin: '0 0 8px 0', fontFamily: fontDisplay, fontSize: 14, color: token.ink }}>Assignment submissions ({studentDetail.submissions.length})</h4>
+              {studentDetail.submissions.length === 0
+                ? <p style={{ color: token.inkFaint, fontSize: 12 }}>No file submissions.</p>
+                : (
+                  <div style={{ maxHeight: 180, overflowY: 'auto', border: `1px solid ${token.line}`, borderRadius: 8 }}>
+                    {studentDetail.submissions.map((s, i) => (
+                      <div key={s.answer_id || i} style={{ padding: '10px 14px', borderTop: i > 0 ? `1px solid ${token.line}` : 'none', fontSize: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div style={{ color: token.ink, fontWeight: 600 }}>{s.quiz_title}</div>
+                            <div style={{ color: token.inkFaint, fontSize: 11, marginTop: 2 }}>{s.course_title} · {new Date(s.created_at).toLocaleDateString()}</div>
+                          </div>
+                          {s.file_url && (
+                            <a href={`http://localhost:5000${s.file_url}`} target="_blank" rel="noreferrer"
+                              style={{ fontSize: 11, color: token.brass, fontWeight: 600, textDecoration: 'none', padding: '4px 10px', border: `1px solid ${token.brass}40`, borderRadius: 6 }}>
+                              Download file
+                            </a>
+                          )}
+                        </div>
+                        {s.feedback && <div style={{ color: token.inkSoft, fontSize: 11, marginTop: 6, fontStyle: 'italic' }}>Feedback: {s.feedback}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+            </>
+          )}
         </Modal>
       )}
     </div>

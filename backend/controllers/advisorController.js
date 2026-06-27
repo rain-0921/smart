@@ -278,6 +278,74 @@ exports.generateReport = async (req, res) => {
   }
 };
 
+// Reuse adminController's toCsvValue helper. Defined locally so the advisor
+// controller stays self-contained.
+function toCsvValue(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Stream the currently visible report as a downloadable CSV file. Mirrors the
+// generateReport query so the file matches what the advisor sees on screen.
+exports.exportReport = async (req, res) => {
+  const advisorId = req.user.user_id;
+  const type = req.query.type || 'progress';
+  try {
+    let rows = [];
+    let headers = [];
+
+    if (type === 'academic') {
+      headers = ['username', 'email', 'programme', 'academic_level', 'gpa', 'is_at_risk', 'enrolled_courses', 'completed_courses'];
+      [rows] = await db.execute(
+        `SELECT u.username, u.email, sp.programme, sp.academic_level,
+                sp.gpa, sp.is_at_risk,
+                COUNT(DISTINCT e.course_id) AS enrolled_courses,
+                SUM(CASE WHEN e.status='completed' THEN 1 ELSE 0 END) AS completed_courses
+         FROM student_profile sp
+         JOIN user u ON sp.user_id = u.user_id
+         LEFT JOIN enrollment e ON e.user_id = u.user_id
+         WHERE sp.advisor_id=?
+         GROUP BY u.user_id
+         ORDER BY sp.gpa DESC`, [advisorId]
+      );
+    } else {
+      headers = ['username', 'email', 'programme', 'gpa', 'total_courses', 'avg_completion', 'avg_quiz_score', 'quizzes_taken', 'is_at_risk'];
+      [rows] = await db.execute(
+        `SELECT u.username, u.email, sp.programme, sp.gpa,
+                COUNT(DISTINCT e.course_id) AS total_courses,
+                COALESCE(AVG(e.completion_percent),0) AS avg_completion,
+                COALESCE(AVG(qa.score),0) AS avg_quiz_score,
+                COUNT(DISTINCT qa.quiz_attempt_id) AS quizzes_taken,
+                sp.is_at_risk
+         FROM student_profile sp
+         JOIN user u ON sp.user_id = u.user_id
+         LEFT JOIN enrollment e ON e.user_id = u.user_id AND e.status='active'
+         LEFT JOIN quiz_attempt qa ON qa.user_id = u.user_id AND qa.status='graded'
+         WHERE sp.advisor_id=?
+         GROUP BY u.user_id
+         ORDER BY avg_completion DESC`, [advisorId]
+      );
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No data available to export' });
+    }
+
+    const lines = [headers.join(',')];
+    for (const row of rows) {
+      lines.push(headers.map(h => toCsvValue(row[h])).join(','));
+    }
+    const csv = lines.join('\r\n');
+    const filename = `advisor_${type}_report_${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── NOTIFICATIONS ───────────────────────────────────────
 exports.getNotifications = async (req, res) => {
   const userId = req.user.user_id;

@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   advisorGetDashboard, advisorGetProfile, advisorUpdateProfile,
   advisorGetStudents, advisorGetStudent, advisorGetGrades,
-  advisorGetProgress, advisorGetReport,
+  advisorGetProgress, advisorGetReport, advisorExportReport,
   advisorGetNotifications, advisorMarkRead
 } from '../services/api';
 
@@ -110,6 +110,7 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.8 }) {
     case 'x':         return <svg {...common}><path d="M6 6l12 12M18 6 6 18" /></svg>;
     case 'camera':    return <svg {...common}><path d="M4 8h3l2-3h6l2 3h3v11H4Z" /><circle cx="12" cy="13.5" r="3.3" /></svg>;
     case 'spark':     return <svg {...common}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18" /></svg>;
+    case 'download':  return <svg {...common}><path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" /></svg>;
     default: return null;
   }
 }
@@ -371,6 +372,25 @@ export default function AdvisorDashboard() {
     await withLoading('reports', async () => setReport((await advisorGetReport(type)).data));
   };
 
+  // Trigger CSV download of the currently displayed report. Mirrors the
+  // admin dashboard's export pattern (AdminDashboard.jsx).
+  const exportReportCsv = async () => {
+    try {
+      const res = await advisorExportReport(reportType);
+      const blob = new Blob([res.data], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `advisor_${reportType}_report_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to export report: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
   // ── notifications ──
   const markRead = async (id) => {
     try {
@@ -596,15 +616,29 @@ export default function AdvisorDashboard() {
           {/* ── REPORTS ── */}
           {tab === 'reports' && (
             <div className="adv-card">
-              <div style={{ display: 'inline-flex', background: token.surface, border: `1px solid ${token.line}`, borderRadius: 8, padding: 3, marginBottom: 20 }}>
-                {[['progress', 'Progress report'], ['academic', 'Academic summary']].map(([key, label]) => (
-                  <button key={key} className="adv-tab-btn" onClick={() => generateReport(key)}
-                    style={{
-                      border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                      background: reportType === key ? token.ink : 'transparent',
-                      color: reportType === key ? '#fff' : token.inkSoft,
-                    }}>{label}</button>
-                ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+                <div style={{ display: 'inline-flex', background: token.surface, border: `1px solid ${token.line}`, borderRadius: 8, padding: 3 }}>
+                  {[['progress', 'Progress report'], ['academic', 'Academic summary']].map(([key, label]) => (
+                    <button key={key} className="adv-tab-btn" onClick={() => generateReport(key)}
+                      style={{
+                        border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        background: reportType === key ? token.ink : 'transparent',
+                        color: reportType === key ? '#fff' : token.inkSoft,
+                      }}>{label}</button>
+                  ))}
+                </div>
+                <button
+                  onClick={exportReportCsv}
+                  disabled={!report || report.data.length === 0}
+                  style={{
+                    padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: (!report || report.data.length === 0) ? 'not-allowed' : 'pointer',
+                    border: `1px solid ${token.line}`, borderRadius: 6,
+                    background: (!report || report.data.length === 0) ? token.surface : token.ink,
+                    color: (!report || report.data.length === 0) ? token.inkFaint : '#fff',
+                    display: 'inline-flex', alignItems: 'center', gap: 6
+                  }}>
+                  <Icon name="download" size={13} /> Export CSV
+                </button>
               </div>
 
               {loading.reports ? <Loading /> : report && (
