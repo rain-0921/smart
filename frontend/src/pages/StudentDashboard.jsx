@@ -102,46 +102,46 @@ function GlobalStyle() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
-      .adv-root * { box-sizing: border-box; }
-      .adv-root { font-family: ${fontBody}; color: ${token.ink}; background: ${token.paper}; }
+      .std-root * { box-sizing: border-box; }
+      .std-root { font-family: ${fontBody}; color: ${token.ink}; background: ${token.paper}; }
 
-      .adv-nav-item { transition: background-color .15s ease, color .15s ease; position: relative; }
-      .adv-nav-item:hover { background: rgba(36,84,166,0.08); color: ${token.surface}; }
-      .adv-nav-item.active::before {
+      .std-nav-item { transition: background-color .15s ease, color .15s ease; position: relative; }
+      .std-nav-item:hover { background: rgba(36,84,166,0.08); color: ${token.surface}; }
+      .std-nav-item.active::before {
         content: ''; position: absolute; left: -16px; top: 8px; bottom: 8px; width: 3px;
         background: ${token.brass}; border-radius: 2px;
       }
 
-      .adv-btn { transition: filter .15s ease, transform .1s ease; }
-      .adv-btn:hover { filter: brightness(1.05); }
-      .adv-btn:active { transform: translateY(1px); }
-      .adv-btn:focus-visible, .adv-input:focus-visible, .adv-icon-btn:focus-visible, .adv-row-btn:focus-visible, .adv-tab-btn:focus-visible {
+      .std-btn { transition: filter .15s ease, transform .1s ease; }
+      .std-btn:hover { filter: brightness(1.05); }
+      .std-btn:active { transform: translateY(1px); }
+      .std-btn:focus-visible, .std-input:focus-visible, .std-icon-btn:focus-visible, .std-row-btn:focus-visible, .std-tab-btn:focus-visible {
         outline: 2px solid ${token.brass}; outline-offset: 2px;
       }
 
-      .adv-row-btn { transition: background-color .15s ease, border-color .15s ease; }
+      .std-row-btn { transition: background-color .15s ease, border-color .15s ease; }
 
-      .adv-table-row { transition: background-color .12s ease; }
-      .adv-table-row:hover { background: ${token.paper} !important; }
+      .std-table-row { transition: background-color .12s ease; }
+      .std-table-row:hover { background: ${token.paper} !important; }
 
-      .adv-card { animation: adv-rise .22s ease both; }
-      @keyframes adv-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+      .std-card { animation: std-rise .22s ease both; }
+      @keyframes std-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-      .adv-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
-      .adv-scroll::-webkit-scrollbar-thumb { background: ${token.line}; border-radius: 8px; }
+      .std-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+      .std-scroll::-webkit-scrollbar-thumb { background: ${token.line}; border-radius: 8px; }
 
-      .adv-table-wrap { overflow-x: auto; }
+      .std-table-wrap { overflow-x: auto; }
 
       @media (prefers-reduced-motion: reduce) {
-        .adv-card { animation: none; }
+        .std-card { animation: none; }
       }
 
       @media (max-width: 860px) {
-        .adv-sidebar { width: 100% !important; flex-direction: row !important; overflow-x: auto; padding: 12px !important; position: sticky; top: 0; z-index: 50; }
-        .adv-sidebar .adv-brand, .adv-sidebar .adv-spacer, .adv-sidebar .adv-foot { display: none !important; }
-        .adv-shell { flex-direction: column !important; }
-        .adv-nav-item { white-space: nowrap; }
-        .adv-nav-item.active::before { left: 0; top: auto; bottom: -10px; right: 8px; width: auto; height: 3px; }
+        .std-sidebar { width: 100% !important; flex-direction: row !important; overflow-x: auto; padding: 12px !important; position: sticky; top: 0; z-index: 50; }
+        .std-sidebar .std-brand, .std-sidebar .std-spacer, .std-sidebar .std-foot { display: none !important; }
+        .std-shell { flex-direction: column !important; }
+        .std-nav-item { white-space: nowrap; }
+        .std-nav-item.active::before { left: 0; top: auto; bottom: -10px; right: 8px; width: auto; height: 3px; }
       }
     `}</style>
   );
@@ -213,7 +213,7 @@ function Modal({ title, onClose, children, wide }) {
   }, [onClose]);
   return (
     <div style={overlay} onClick={onClose}>
-      <div style={{ ...modalBox, maxWidth: wide ? 860 : 520 }} onClick={(e) => e.stopPropagation()} className="adv-scroll adv-card">
+      <div style={{ ...modalBox, maxWidth: wide ? 860 : 520 }} onClick={(e) => e.stopPropagation()} className="std-scroll std-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <h3 style={{ margin: 0, fontFamily: fontDisplay, fontWeight: 600, color: token.ink, fontSize: 20 }}>{title}</h3>
           <button onClick={onClose} style={closeBtn} aria-label="Close">
@@ -571,11 +571,11 @@ export default function StudentDashboard() {
 
   // ─────────────────────────────────────────────────────────
   return (
-    <div className="adv-root" style={appShell}>
+    <div className="std-root" style={appShell}>
       <GlobalStyle />
       {/* Sidebar */}
       <nav style={sidebar}>
-        <div className="adv-brand" style={sidebarLogo}>
+        <div className="std-brand" style={sidebarLogo}>
           <div style={logoBadge}>
             <div style={{
               width: 34, height: 34, borderRadius: '50%', border: `1.5px solid ${token.brass}`,
@@ -600,7 +600,7 @@ export default function StudentDashboard() {
             <div
               key={item.key}
               onClick={() => setTab(item.key)}
-              className={`adv-nav-item${tab === item.key ? ' active' : ''}`}
+              className={`std-nav-item${tab === item.key ? ' active' : ''}`}
               style={{ ...navItem, background: tab === item.key ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === item.key ? '#fff' : '#B7BFCF' }}
             >
               <span style={navIcon}><Icon name={item.icon} size={16} /></span>
@@ -613,7 +613,7 @@ export default function StudentDashboard() {
           <div style={navLabel}>Personal</div>
           <div
             onClick={() => setTab('notifications')}
-            className={`adv-nav-item${tab === 'notifications' ? ' active' : ''}`}
+            className={`std-nav-item${tab === 'notifications' ? ' active' : ''}`}
             style={{ ...navItem, background: tab === 'notifications' ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === 'notifications' ? '#fff' : '#B7BFCF' }}
           >
             <span style={navIcon}><Icon name="notifications" size={16} /></span>
@@ -626,10 +626,10 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        <div className="adv-spacer" style={{ flex: 1 }} />
+        <div className="std-spacer" style={{ flex: 1 }} />
 
         <div style={{ padding: '0 12px' }}>
-          <div onClick={openProfile} className="adv-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
+          <div onClick={openProfile} className="std-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
             <Avatar name={user?.username} size={28} />
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontSize: 13, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -638,7 +638,7 @@ export default function StudentDashboard() {
               <div style={{ fontSize: 11, color: '#8893A8' }}>View profile</div>
             </div>
           </div>
-          <div onClick={logout} className="adv-nav-item adv-foot" style={{ ...navItem, color: '#E2A6A1', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div onClick={logout} className="std-nav-item std-foot" style={{ ...navItem, color: '#E2A6A1', display: 'flex', gap: 10, alignItems: 'center' }}>
             <Icon name="logout" size={16} /> Log out
           </div>
         </div>
@@ -681,7 +681,7 @@ export default function StudentDashboard() {
             <Loading label="Loading your dashboard…" />
           )}
           {tab === 'dashboard' && dashboard && (
-            <div className="adv-card">
+            <div className="std-card">
               <div style={{ marginBottom: 24 }}>
                 <h2 style={greetingTitle}>{getGreeting()}, {user.username} 👋</h2>
                 <p style={greetingSub}>
@@ -814,7 +814,7 @@ export default function StudentDashboard() {
                         </thead>
                         <tbody>
                           {dashboard.quizScores.map((s, i) => (
-                            <tr key={i} className="adv-table-row">
+                            <tr key={i} className="std-table-row">
                               <td style={td}>{s.quiz_title}</td>
                               <td style={td}>
                                 <span style={{
@@ -1086,7 +1086,7 @@ export default function StudentDashboard() {
 
                       {/* ── LESSON CONTENT PANEL ── */}
                       {!activeQuiz && !quizResult && !assignmentData && selectedLesson && (
-                        <div style={{ ...card, marginBottom: 16 }} className="adv-card">
+                        <div style={{ ...card, marginBottom: 16 }} className="std-card">
                           {/* Header */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
