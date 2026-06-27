@@ -103,7 +103,7 @@ export const instrMarkRead          = (id)           => API.patch(`/instructor/n
 // Advisor
 export const advisorGetDashboard     = ()           => API.get('/advisor/dashboard');
 export const advisorGetProfile       = ()           => API.get('/advisor/profile');
-export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data);
+export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const advisorGetStudents      = ()           => API.get('/advisor/students');
 export const advisorGetStudent       = (id)         => API.get(`/advisor/students/${id}`);
 export const advisorGetGrades        = (id)         => API.get(`/advisor/students/${id}/grades`);

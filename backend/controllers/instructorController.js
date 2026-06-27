@@ -67,15 +67,19 @@ exports.updateProfile = async (req, res) => {
   const userId = req.user.user_id;
   const { username, phone_number, department, specialization, subjects_taught, office_hours } = req.body;
   if (!username) return res.status(400).json({ message: 'Username is required' });
-  try {
-    const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
 
+  // req.file is set by the `handlePhotoUpload` multer middleware in instructorRoutes.js.
+  // Format (JPG/PNG) and size (<=5MB) are already validated there per SDS 7.2.2.
+  const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
+
+  try {
     if (photo_url) {
       await db.execute(
         `UPDATE user SET username=?, phone_number=?, department=?, photo_url=? WHERE user_id=?`,
         [username, phone_number||null, department||null, photo_url, userId]
       );
     } else {
+      // No new photo uploaded — leave the existing photo_url untouched.
       await db.execute(
         `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
         [username, phone_number||null, department||null, userId]

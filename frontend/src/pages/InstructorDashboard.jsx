@@ -42,6 +42,8 @@ const token = {
   accent3:    '#1F7A4D',
   accent4:    '#92400E',
   accent5:    '#B3261E',
+  radius:     14,
+  radiusSm:   8,
 };
 
 const fontDisplay = "'Lora', Georgia, serif";
@@ -474,8 +476,6 @@ export default function InstructorDashboard() {
     notifications: 'Notifications',
   }[page] || '';
 
-  const S = (k) => ({ '--token': token })[k];
-
   // ─────────────────────────────────────────────────────────
   return (
     <div className="ins-root" style={{ display: 'flex', minHeight: '100vh', background: token.paper, fontFamily: fontBody }}>
@@ -752,10 +752,16 @@ export default function InstructorDashboard() {
                             </div>
                             <div style={{ display: 'flex', gap: 4, flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
                               <StatusBadge status={q.status} />
-                              <button className="ins-btn" onClick={() => openQuiz(q)}
-                                style={{ background: token.brassSoft, color: token.brass, border: 'none', borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-                                Manage
-                              </button>
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                <button className="ins-btn" onClick={() => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: q.due_date || '', time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', status: q.status || 'draft' }); setShowQuizModal(true); }}
+                                  style={{ background: token.surface2, color: token.ink, border: `1px solid ${token.line}`, borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                                  Edit
+                                </button>
+                                <button className="ins-btn" onClick={() => deleteQuiz(q.quiz_id)}
+                                  style={{ background: token.dangerSoft, color: token.danger, border: 'none', borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                                  Del
+                                </button>
+                              </div>
                             </div>
                           </div>
 
