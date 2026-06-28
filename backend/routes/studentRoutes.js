@@ -9,7 +9,7 @@ router.use(protect, authorize('student'));
 
 router.get('/dashboard',                    s.getDashboard);
 router.get('/profile',                      s.getProfile);
-router.put('/profile', handlePhotoUpload, s.updateProfile);
+router.put('/profile',     handlePhotoUpload,   s.updateProfile);
 router.get('/courses',                      s.getCourseCatalogue);
 router.post('/courses/enroll',              s.enrollCourse);
 router.get('/courses/:courseId/modules',    s.getCourseModules);

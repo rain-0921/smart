@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { handlePhotoUpload } = require('../middleware/photoUpload');
+const { handleMaterialUpload } = require('../middleware/materialUpload');
 const i = require('../controllers/instructorController');
 
 router.use(protect, authorize('instructor'));
@@ -9,7 +10,7 @@ router.use(protect, authorize('instructor'));
 // Dashboard & Profile
 router.get('/dashboard',                         i.getDashboard);
 router.get('/profile',                           i.getProfile);
-router.put('/profile', handlePhotoUpload, i.updateProfile);
+router.put('/profile',     handlePhotoUpload,   i.updateProfile);
 
 // Courses
 router.get('/courses',                           i.getMyCourses);
@@ -23,7 +24,7 @@ router.post('/courses/:courseId/modules',        i.createModule);
 router.delete('/modules/:moduleId',              i.deleteModule);
 
 // Lessons
-router.post('/modules/:moduleId/lessons',        i.createLesson);
+router.post('/modules/:moduleId/lessons',       handleMaterialUpload, i.createLesson);
 router.delete('/lessons/:lessonId',              i.deleteLesson);
 
 // Quizzes
@@ -35,6 +36,7 @@ router.delete('/quizzes/:quizId',                i.deleteQuiz);
 // Questions
 router.get('/quizzes/:quizId/questions',         i.getQuizQuestions);
 router.post('/quizzes/:quizId/questions',        i.addQuestion);
+router.put('/questions/:questionId',             i.updateQuestion);
 router.delete('/questions/:questionId',          i.deleteQuestion);
 
 // Quiz Feedback (score-band messages)
@@ -45,6 +47,8 @@ router.delete('/feedback/:feedbackId',           i.deleteQuizFeedback);
 
 // Student Progress & Grading
 router.get('/courses/:courseId/students',        i.getCourseStudents);
+router.get('/courses/:courseId/students/export', i.exportCourseStudents);
+router.get('/students/:studentId',               i.getStudentDetail);
 router.get('/submissions/pending',               i.getPendingSubmissions);
 router.patch('/submissions/:attemptId/grade',    i.gradeSubmission);
 

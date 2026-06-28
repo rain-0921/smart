@@ -86,9 +86,12 @@ exports.updateProfile = async (req, res) => {
   const userId = req.user.user_id;
   const { username, phone_number, department, academic_level, programme, learning_preferences } = req.body;
   if (!username) return res.status(400).json({ message: 'Username is required' });
-  try {
-    const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
 
+  // req.file is set by the `handlePhotoUpload` multer middleware in studentRoutes.js.
+  // Format (JPG/PNG) and size (<=5MB) are already validated there per SDS 7.2.2.
+  const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
+
+  try {
     if (photo_url) {
       await db.execute(
         `UPDATE user SET username=?, phone_number=?, department=?, photo_url=? WHERE user_id=?`,
@@ -313,7 +316,8 @@ exports.submitQuiz = async (req, res) => {
     if (attemptRows.length === 0) return res.status(404).json({ message: 'Attempt not found' });
 
     let totalScore = 0;
-    let totalPoints = 0;
+    let totalPoints = 0;       // points from auto-gradable questions only
+    let pendingReview = 0;     // number of short_answer questions awaiting manual grading
     const results = [];
 
     for (const ans of answers) {
@@ -322,33 +326,44 @@ exports.submitQuiz = async (req, res) => {
       );
       if (qRows.length === 0) continue;
       const question = qRows[0];
-      totalPoints += question.points;
 
-      let isCorrect = false;
+      let isCorrect = null;     // null = pending review (short_answer), true/false = auto-graded
       let scoreAwarded = 0;
 
-      if (question.question_type !== 'short_answer') {
+      if (question.question_type === 'short_answer') {
+        // Short-answer cannot be auto-graded per spec; instructor will grade manually.
+        // is_correct stays NULL so the UI can show a "Pending review" badge.
+        pendingReview += 1;
+        scoreAwarded = 0;
+      } else {
+        // Exclude short_answer from totalPoints so they're not penalized.
+        totalPoints += question.points;
         isCorrect = ans.user_answer?.trim().toLowerCase() ===
                     question.correct_answer?.trim().toLowerCase();
         scoreAwarded = isCorrect ? question.points : 0;
         if (isCorrect) totalScore += question.points;
       }
 
+      const autoFeedback = isCorrect === true
+        ? 'Correct!'
+        : (isCorrect === false ? (question.improvement_tip || 'Review this topic') : null);
+
       await db.execute(
         `INSERT INTO answer (quiz_attempt_id, question_id, user_answer, is_correct, score_awarded, feedback)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [attemptId, ans.question_id, ans.user_answer || '',
          isCorrect, scoreAwarded,
-         isCorrect ? 'Correct!' : (question.improvement_tip || 'Review this topic')]
+         isCorrect === null ? 'Awaiting instructor review' : autoFeedback]
       );
 
       results.push({
         question_text: question.question_text,
+        question_type: question.question_type,
         user_answer: ans.user_answer,
         correct_answer: question.question_type !== 'short_answer' ? question.correct_answer : null,
         is_correct: isCorrect,
         score_awarded: scoreAwarded,
-        feedback: isCorrect ? 'Correct!' : (question.improvement_tip || 'Review this topic')
+        feedback: isCorrect === null ? 'Awaiting instructor review' : autoFeedback
       });
     }
 
@@ -372,10 +387,17 @@ exports.submitQuiz = async (req, res) => {
     await db.execute(
       `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
        VALUES (?, 'quiz_submit', ?, 'quiz_attempt', ?)`,
-      [userId, `Student submitted quiz. Score: ${percentage.toFixed(1)}%`, attemptId]
+      [userId, `Student submitted quiz. Score: ${percentage.toFixed(1)}%${pendingReview > 0 ? ` (${pendingReview} pending review)` : ''}`, attemptId]
     );
 
-    res.json({ score: percentage.toFixed(1), totalScore, totalPoints, overallFeedback, results });
+    res.json({
+      score: percentage.toFixed(1),
+      totalScore,
+      totalPoints,
+      pendingReview,
+      overallFeedback,
+      results
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

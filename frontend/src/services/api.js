@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API = axios.create({ baseURL: 'http://localhost:5000/api' });
+const BASE_URL = 'http://localhost:5000';
+const API = axios.create({ baseURL: `${BASE_URL}/api` });
+
+export { BASE_URL };
+
+/** Prepends BASE_URL if the path is a relative upload path (starts with /uploads/). */
+export const photoUrl = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 
 API.interceptors.request.use((req) => {
   const token = localStorage.getItem('token');
@@ -88,27 +98,31 @@ export const instrUpdateQuiz        = (quizId, data) => API.put(`/instructor/qui
 export const instrDeleteQuiz        = (quizId)       => API.delete(`/instructor/quizzes/${quizId}`);
 export const instrGetQuestions      = (quizId)       => API.get(`/instructor/quizzes/${quizId}/questions`);
 export const instrAddQuestion       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/questions`, data);
+export const instrUpdateQuestion    = (questionId, data) => API.put(`/instructor/questions/${questionId}`, data);
 export const instrDeleteQuestion    = (questionId)   => API.delete(`/instructor/questions/${questionId}`);
 export const instrGetFeedback       = (quizId)       => API.get(`/instructor/quizzes/${quizId}/feedback`);
 export const instrAddFeedback       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/feedback`, data);
 export const instrUpdateFeedback    = (feedbackId, data) => API.put(`/instructor/feedback/${feedbackId}`, data);
 export const instrDeleteFeedback    = (feedbackId)   => API.delete(`/instructor/feedback/${feedbackId}`);
 export const instrGetStudents       = (courseId)     => API.get(`/instructor/courses/${courseId}/students`);
+export const instrExportStudents    = (courseId)     => API.get(`/instructor/courses/${courseId}/students/export`, { responseType: 'blob' });
+export const instrGetStudentDetail  = (studentId)    => API.get(`/instructor/students/${studentId}`);
 export const instrGetPending        = ()             => API.get('/instructor/submissions/pending');
 export const instrGradeSubmission   = (attemptId, data) => API.patch(`/instructor/submissions/${attemptId}/grade`, data);
-export const instrGetAnalytics      = (courseId)     => API.get(`/instructor/courses/${courseId}/analytics`);
+export const instrGetAnalytics      = (courseId, params = {}) => API.get(`/instructor/courses/${courseId}/analytics`, { params });
 export const instrGetNotifications  = ()             => API.get('/instructor/notifications');
 export const instrMarkRead          = (id)           => API.patch(`/instructor/notifications/${id}/read`);
 
 // Advisor
 export const advisorGetDashboard     = ()           => API.get('/advisor/dashboard');
 export const advisorGetProfile       = ()           => API.get('/advisor/profile');
-export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data);
+export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const advisorGetStudents      = ()           => API.get('/advisor/students');
 export const advisorGetStudent       = (id)         => API.get(`/advisor/students/${id}`);
 export const advisorGetGrades        = (id)         => API.get(`/advisor/students/${id}/grades`);
 export const advisorGetProgress      = ()           => API.get('/advisor/progress');
 export const advisorGetReport        = (type)       => API.get(`/advisor/reports?type=${type}`);
+export const advisorExportReport     = (type)       => API.get(`/advisor/reports/export?type=${type}`, { responseType: 'blob' });
 export const advisorGetNotifications = ()           => API.get('/advisor/notifications');
 export const advisorMarkRead         = (id)         => API.patch(`/advisor/notifications/${id}/read`);
 

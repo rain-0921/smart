@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   studentGetDashboard, studentGetProfile, studentUpdateProfile,
@@ -6,7 +6,8 @@ import {
   studentGetQuizzes, studentStartQuiz, studentSubmitQuiz,
   studentGetAssignment, studentSubmitAssignment,
   studentGetGrades, studentGetGradeDetail, studentGetProgress,
-  studentGetNotifications, studentMarkRead, studentLogActivity
+  studentGetNotifications, studentMarkRead, studentLogActivity,
+  BASE_URL
 } from '../services/api';
 
 const token = {
@@ -102,46 +103,46 @@ function GlobalStyle() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
-      .adv-root * { box-sizing: border-box; }
-      .adv-root { font-family: ${fontBody}; color: ${token.ink}; background: ${token.paper}; }
+      .std-root * { box-sizing: border-box; }
+      .std-root { font-family: ${fontBody}; color: ${token.ink}; background: ${token.paper}; }
 
-      .adv-nav-item { transition: background-color .15s ease, color .15s ease; position: relative; }
-      .adv-nav-item:hover { background: rgba(36,84,166,0.08); color: ${token.surface}; }
-      .adv-nav-item.active::before {
+      .std-nav-item { transition: background-color .15s ease, color .15s ease; position: relative; }
+      .std-nav-item:hover { background: rgba(36,84,166,0.08); color: ${token.surface}; }
+      .std-nav-item.active::before {
         content: ''; position: absolute; left: -16px; top: 8px; bottom: 8px; width: 3px;
         background: ${token.brass}; border-radius: 2px;
       }
 
-      .adv-btn { transition: filter .15s ease, transform .1s ease; }
-      .adv-btn:hover { filter: brightness(1.05); }
-      .adv-btn:active { transform: translateY(1px); }
-      .adv-btn:focus-visible, .adv-input:focus-visible, .adv-icon-btn:focus-visible, .adv-row-btn:focus-visible, .adv-tab-btn:focus-visible {
+      .std-btn { transition: filter .15s ease, transform .1s ease; }
+      .std-btn:hover { filter: brightness(1.05); }
+      .std-btn:active { transform: translateY(1px); }
+      .std-btn:focus-visible, .std-input:focus-visible, .std-icon-btn:focus-visible, .std-row-btn:focus-visible, .std-tab-btn:focus-visible {
         outline: 2px solid ${token.brass}; outline-offset: 2px;
       }
 
-      .adv-row-btn { transition: background-color .15s ease, border-color .15s ease; }
+      .std-row-btn { transition: background-color .15s ease, border-color .15s ease; }
 
-      .adv-table-row { transition: background-color .12s ease; }
-      .adv-table-row:hover { background: ${token.paper} !important; }
+      .std-table-row { transition: background-color .12s ease; }
+      .std-table-row:hover { background: ${token.paper} !important; }
 
-      .adv-card { animation: adv-rise .22s ease both; }
-      @keyframes adv-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+      .std-card { animation: std-rise .22s ease both; }
+      @keyframes std-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-      .adv-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
-      .adv-scroll::-webkit-scrollbar-thumb { background: ${token.line}; border-radius: 8px; }
+      .std-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+      .std-scroll::-webkit-scrollbar-thumb { background: ${token.line}; border-radius: 8px; }
 
-      .adv-table-wrap { overflow-x: auto; }
+      .std-table-wrap { overflow-x: auto; }
 
       @media (prefers-reduced-motion: reduce) {
-        .adv-card { animation: none; }
+        .std-card { animation: none; }
       }
 
       @media (max-width: 860px) {
-        .adv-sidebar { width: 100% !important; flex-direction: row !important; overflow-x: auto; padding: 12px !important; position: sticky; top: 0; z-index: 50; }
-        .adv-sidebar .adv-brand, .adv-sidebar .adv-spacer, .adv-sidebar .adv-foot { display: none !important; }
-        .adv-shell { flex-direction: column !important; }
-        .adv-nav-item { white-space: nowrap; }
-        .adv-nav-item.active::before { left: 0; top: auto; bottom: -10px; right: 8px; width: auto; height: 3px; }
+        .std-sidebar { width: 100% !important; flex-direction: row !important; overflow-x: auto; padding: 12px !important; position: sticky; top: 0; z-index: 50; }
+        .std-sidebar .std-brand, .std-sidebar .std-spacer, .std-sidebar .std-foot { display: none !important; }
+        .std-shell { flex-direction: column !important; }
+        .std-nav-item { white-space: nowrap; }
+        .std-nav-item.active::before { left: 0; top: auto; bottom: -10px; right: 8px; width: auto; height: 3px; }
       }
     `}</style>
   );
@@ -167,11 +168,17 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.8 }) {
 function initials(name = '') {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '?';
 }
+const resolvePhoto = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 function Avatar({ name, photoUrl, size = 38 }) {
   const [broken, setBroken] = useState(false);
-  if (photoUrl && !broken) {
+  const src = resolvePhoto(photoUrl);
+  if (src && !broken) {
     return (
-      <img src={photoUrl} alt={name} onError={() => setBroken(true)}
+      <img src={src} alt={name} onError={() => setBroken(true)}
         style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${token.line}`, flexShrink: 0 }} />
     );
   }
@@ -213,7 +220,7 @@ function Modal({ title, onClose, children, wide }) {
   }, [onClose]);
   return (
     <div style={overlay} onClick={onClose}>
-      <div style={{ ...modalBox, maxWidth: wide ? 860 : 520 }} onClick={(e) => e.stopPropagation()} className="adv-scroll adv-card">
+      <div style={{ ...modalBox, maxWidth: wide ? 860 : 520 }} onClick={(e) => e.stopPropagation()} className="std-scroll std-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <h3 style={{ margin: 0, fontFamily: fontDisplay, fontWeight: 600, color: token.ink, fontSize: 20 }}>{title}</h3>
           <button onClick={onClose} style={closeBtn} aria-label="Close">
@@ -232,7 +239,6 @@ export default function StudentDashboard() {
   const [tab, setTab] = useState('dashboard');
   const [alert, setAlert] = useState({ msg: '', type: '' });
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState({});
 
   // data
   const [dashboard, setDashboard] = useState(null);
@@ -266,19 +272,17 @@ export default function StudentDashboard() {
   // profile form
   const [profileForm, setProfileForm] = useState({});
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profile, setProfile] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const fileInputRef = useRef(null);
+  // Reference state vars to keep ESLint happy (they are used in callbacks/JSX)
+  void [profile, fileInputRef];
 
   const showAlert = (msg, type = 'success') => {
     setAlert({ msg, type });
     setTimeout(() => setAlert({ msg: '', type: '' }), 3000);
   };
-
-  const withLoading = useCallback(async (key, fn) => {
-    setLoading(l => ({ ...l, [key]: true }));
-    try { await fn(); }
-    catch (e) { showAlert(e?.response?.data?.message || 'Could not load this section. Try again.', 'error'); }
-    finally { setLoading(l => ({ ...l, [key]: false })); }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const existing = document.getElementById('sils-dashboard-fonts');
@@ -472,6 +476,7 @@ export default function StudentDashboard() {
     setPhotoFile(null);
     try {
       const res = await studentGetProfile();
+      setProfile(res.data);
       setProfileData(res.data);
       setProfileForm({
         username: res.data.username || '',
@@ -482,6 +487,8 @@ export default function StudentDashboard() {
         programme: res.data.programme || '',
         learning_preferences: res.data.learning_preferences || '',
       });
+      setPhotoFile(null);
+      setPhotoPreview(null);
     } catch {
       showAlert('Failed to load profile', 'error');
       setShowProfileModal(false);
@@ -489,20 +496,46 @@ export default function StudentDashboard() {
       setProfileLoading(false);
     }
   };
+
+  const onPhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/jpeg', 'image/png'].includes(file.type)) {
+      showAlert('Photo must be a JPG or PNG file.', 'error');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showAlert('Photo must be 5MB or smaller.', 'error');
+      e.target.value = '';
+      return;
+    }
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
+  // eslint-disable-next-line no-unused-vars
+  void onPhotoChange;
+  useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
+
   const saveProfile = async () => {
     try {
       const fd = new FormData();
-      fd.append('username', profileForm.username);
+      fd.append('username', profileForm.username || '');
       fd.append('phone_number', profileForm.phone_number || '');
       fd.append('department', profileForm.department || '');
       fd.append('academic_level', profileForm.academic_level || '');
       fd.append('programme', profileForm.programme || '');
       fd.append('learning_preferences', profileForm.learning_preferences || '');
       if (photoFile) fd.append('photo', photoFile);
+
       const res = await studentUpdateProfile(fd);
-      setProfileData(p => ({ ...p, photo_url: res.data?.photo_url || p?.photo_url }));
       showAlert('Profile updated successfully!');
       setShowProfileModal(false);
+      setPhotoFile(null);
+      setPhotoPreview(null);
+      if (res?.data?.photo_url) {
+        setProfile(p => ({ ...p, photo_url: res.data.photo_url }));
+      }
     } catch (e) {
       showAlert(e.response?.data?.message || 'Update failed', 'error');
     }
@@ -546,11 +579,11 @@ export default function StudentDashboard() {
 
   // ─────────────────────────────────────────────────────────
   return (
-    <div className="adv-root" style={appShell}>
+    <div className="std-root" style={appShell}>
       <GlobalStyle />
       {/* Sidebar */}
       <nav style={sidebar}>
-        <div className="adv-brand" style={sidebarLogo}>
+        <div className="std-brand" style={sidebarLogo}>
           <div style={logoBadge}>
             <div style={{
               width: 34, height: 34, borderRadius: '50%', border: `1.5px solid ${token.brass}`,
@@ -575,7 +608,7 @@ export default function StudentDashboard() {
             <div
               key={item.key}
               onClick={() => setTab(item.key)}
-              className={`adv-nav-item${tab === item.key ? ' active' : ''}`}
+              className={`std-nav-item${tab === item.key ? ' active' : ''}`}
               style={{ ...navItem, background: tab === item.key ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === item.key ? '#fff' : '#B7BFCF' }}
             >
               <span style={navIcon}><Icon name={item.icon} size={16} /></span>
@@ -588,7 +621,7 @@ export default function StudentDashboard() {
           <div style={navLabel}>Personal</div>
           <div
             onClick={() => setTab('notifications')}
-            className={`adv-nav-item${tab === 'notifications' ? ' active' : ''}`}
+            className={`std-nav-item${tab === 'notifications' ? ' active' : ''}`}
             style={{ ...navItem, background: tab === 'notifications' ? 'rgba(255,255,255,0.08)' : 'transparent', color: tab === 'notifications' ? '#fff' : '#B7BFCF' }}
           >
             <span style={navIcon}><Icon name="notifications" size={16} /></span>
@@ -601,11 +634,11 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        <div className="adv-spacer" style={{ flex: 1 }} />
+        <div className="std-spacer" style={{ flex: 1 }} />
 
         <div style={{ padding: '0 12px' }}>
-          <div onClick={openProfile} className="adv-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
-            <Avatar name={user?.username} size={28} />
+          <div onClick={openProfile} className="std-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
+            <Avatar name={user?.username} photoUrl={dashboard?.profile?.photo_url} size={28} />
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontSize: 13, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {user?.username}
@@ -613,7 +646,7 @@ export default function StudentDashboard() {
               <div style={{ fontSize: 11, color: '#8893A8' }}>View profile</div>
             </div>
           </div>
-          <div onClick={logout} className="adv-nav-item adv-foot" style={{ ...navItem, color: '#E2A6A1', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div onClick={logout} className="std-nav-item std-foot" style={{ ...navItem, color: '#E2A6A1', display: 'flex', gap: 10, alignItems: 'center' }}>
             <Icon name="logout" size={16} /> Log out
           </div>
         </div>
@@ -643,7 +676,7 @@ export default function StudentDashboard() {
               {unreadCount > 0 && <span style={notifDot} />}
             </button>
             <button style={{ ...iconBtn, border: 'none', background: 'none', cursor: 'pointer' }} onClick={openProfile} aria-label="Profile">
-              <Avatar name={user?.username} size={32} />
+              <Avatar name={user?.username} photoUrl={dashboard?.profile?.photo_url} size={32} />
             </button>
           </div>
         </header>
@@ -656,7 +689,7 @@ export default function StudentDashboard() {
             <Loading label="Loading your dashboard…" />
           )}
           {tab === 'dashboard' && dashboard && (
-            <div className="adv-card">
+            <div className="std-card">
               <div style={{ marginBottom: 24 }}>
                 <h2 style={greetingTitle}>{getGreeting()}, {user.username} 👋</h2>
                 <p style={greetingSub}>
@@ -789,7 +822,7 @@ export default function StudentDashboard() {
                         </thead>
                         <tbody>
                           {dashboard.quizScores.map((s, i) => (
-                            <tr key={i} className="adv-table-row">
+                            <tr key={i} className="std-table-row">
                               <td style={td}>{s.quiz_title}</td>
                               <td style={td}>
                                 <span style={{
@@ -873,7 +906,7 @@ export default function StudentDashboard() {
                                 margin: selectedLesson?.lesson_id === l.lesson_id ? '0 -8px' : 0,
                               }}>
                                 <span style={{ fontSize: 16 }}>
-                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : '📝'}
+                                  {l.content_type === 'video' ? '🎬' : l.content_type === 'pdf' ? '📄' : l.content_type === 'text' ? '📝' : '📎'}
                                 </span>
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontWeight: 600, fontSize: 14 }}>{l.title}</div>
@@ -984,7 +1017,7 @@ export default function StudentDashboard() {
                         </div>
                       )}
 
-                      {quizResult && !activeQuiz && (
+                          {quizResult && !activeQuiz && (
                         <div style={{ ...card, marginBottom: 20 }}>
                           <h3 style={{ marginTop: 0, fontFamily: "'DM Serif Display', serif" }}>Quiz Results</h3>
                           <div style={{
@@ -995,6 +1028,11 @@ export default function StudentDashboard() {
                           </div>
                           <div style={{ textAlign: 'center', color: theme.textMuted, marginBottom: 20 }}>
                             {quizResult.totalScore} / {quizResult.totalPoints} points
+                            {quizResult.pendingReview > 0 && (
+                              <span style={{ marginLeft: 12, color: theme.accent4 }}>
+                                · {quizResult.pendingReview} question{quizResult.pendingReview > 1 ? 's' : ''} awaiting review
+                              </span>
+                            )}
                           </div>
                           {quizResult.overallFeedback && (
                             <div style={{
@@ -1005,26 +1043,49 @@ export default function StudentDashboard() {
                               📝 {quizResult.overallFeedback}
                             </div>
                           )}
-                          {quizResult.results.map((r, i) => (
-                            <div key={i} style={{
-                              padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
-                              background: r.is_correct ? 'rgba(52,211,153,0.08)' : 'rgba(251,113,133,0.08)',
-                              border: `1px solid ${r.is_correct ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.3)'}`
-                            }}>
-                              <div style={{ fontWeight: 600, fontSize: 14 }}>Q{i + 1}. {r.question_text}</div>
-                              <div style={{ fontSize: 12, marginTop: 4 }}>
-                                Your answer: <strong>{r.user_answer || '(no answer)'}</strong>
-                              </div>
-                              {!r.is_correct && r.correct_answer &&
-                                <div style={{ fontSize: 12, color: theme.accent3 }}>
-                                  Correct: <strong>{r.correct_answer}</strong>
+                          {quizResult.results.map((r, i) => {
+                            const isPending = r.is_correct === null || r.is_correct === undefined;
+                            const isCorrect = r.is_correct === true;
+                            const bg = isPending
+                              ? 'rgba(251,176,64,0.10)'
+                              : (isCorrect ? 'rgba(52,211,153,0.08)' : 'rgba(251,113,133,0.08)');
+                            const border = isPending
+                              ? 'rgba(251,176,64,0.35)'
+                              : (isCorrect ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.3)');
+                            return (
+                              <div key={i} style={{
+                                padding: 12, marginBottom: 8, borderRadius: theme.radiusSm,
+                                background: bg, border: `1px solid ${border}`
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14 }}>
+                                  <span>Q{i + 1}. {r.question_text}</span>
+                                  {isPending && (
+                                    <span style={{
+                                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
+                                      background: 'rgba(251,176,64,0.20)', color: '#a06400'
+                                    }}>
+                                      ⏳ PENDING REVIEW
+                                    </span>
+                                  )}
                                 </div>
-                              }
-                              <div style={{ fontSize: 12, color: r.is_correct ? theme.accent3 : theme.accent5, marginTop: 4 }}>
-                                💡 {r.feedback}
+                                <div style={{ fontSize: 12, marginTop: 4 }}>
+                                  Your answer: <strong>{r.user_answer || '(no answer)'}</strong>
+                                </div>
+                                {!isPending && !isCorrect && r.correct_answer &&
+                                  <div style={{ fontSize: 12, color: theme.accent3 }}>
+                                    Correct: <strong>{r.correct_answer}</strong>
+                                  </div>
+                                }
+                                <div style={{
+                                  fontSize: 12,
+                                  color: isPending ? '#a06400' : (isCorrect ? theme.accent3 : theme.accent5),
+                                  marginTop: 4
+                                }}>
+                                  {isPending ? '⏳' : '💡'} {r.feedback}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                           <button style={{ ...btnGhost, marginTop: 12 }} onClick={() => setQuizResult(null)}>
                             Close Results
                           </button>
@@ -1033,7 +1094,7 @@ export default function StudentDashboard() {
 
                       {/* ── LESSON CONTENT PANEL ── */}
                       {!activeQuiz && !quizResult && !assignmentData && selectedLesson && (
-                        <div style={{ ...card, marginBottom: 16 }} className="adv-card">
+                        <div style={{ ...card, marginBottom: 16 }} className="std-card">
                           {/* Header */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1050,7 +1111,8 @@ export default function StudentDashboard() {
                                 }}>
                                   {selectedLesson.content_type === 'video' ? '🎬 Video'
                                     : selectedLesson.content_type === 'pdf' ? '📄 PDF'
-                                    : '📝 Reading'}
+                                    : selectedLesson.content_type === 'text' ? '📝 Reading'
+                                    : '📎 Material'}
                                 </span>
                                 {selectedLesson.duration_minutes && (
                                   <span style={{ fontSize: 11, color: theme.textDim }}>
@@ -1169,6 +1231,30 @@ export default function StudentDashboard() {
                               fontFamily: fontBody,
                             }}>
                               {selectedLesson.content_text}
+                            </div>
+                          )}
+
+                          {/* OTHER uploaded material (DOC/DOCX/PPT/PPTX/image) — offer download */}
+                          {selectedLesson.content_type === 'other' && selectedLesson.content_url && (
+                            <div style={{
+                              padding: 24, borderRadius: theme.radiusSm, textAlign: 'center',
+                              background: theme.surface2, border: `1px solid ${theme.border}`
+                            }}>
+                              <div style={{ fontSize: 40, marginBottom: 8 }}>
+                                {selectedLesson.content_url.match(/\.(jpe?g|png|gif)$/i) ? '🖼️' : '📎'}
+                              </div>
+                              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Attached material</div>
+                              <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
+                                Click below to open or download the file.
+                              </div>
+                              <a
+                                href={selectedLesson.content_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none' }}
+                              >
+                                Open material ↗
+                              </a>
                             </div>
                           )}
 
@@ -1570,27 +1656,46 @@ export default function StudentDashboard() {
                 </div>
               )}
               <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
-                {gradeDetail.answers?.map((a, i) => (
-                  <div key={a.answer_id} style={{ padding: '10px 0', borderBottom: `1px solid ${theme.border}` }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Q{i + 1}. {a.question_text}</div>
-                    <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 2 }}>
-                      Your answer: <strong style={{ color: theme.text }}>{a.user_answer || '(no answer)'}</strong>
-                    </div>
-                    {a.correct_answer && !a.is_correct && (
-                      <div style={{ fontSize: 12, color: theme.accent3, marginBottom: 2 }}>
-                        Correct: <strong>{a.correct_answer}</strong>
+                {gradeDetail.answers?.map((a, i) => {
+                  const isPending = a.is_correct === null || a.is_correct === undefined;
+                  const isCorrect = a.is_correct === true;
+                  return (
+                    <div key={a.answer_id} style={{ padding: '10px 0', borderBottom: `1px solid ${theme.border}` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                        <span>Q{i + 1}. {a.question_text}</span>
+                        {isPending && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                            background: 'rgba(251,176,64,0.20)', color: '#a06400'
+                          }}>
+                            ⏳ PENDING REVIEW
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <div style={{ fontSize: 12, color: a.is_correct ? theme.accent3 : theme.accent5, marginBottom: 2 }}>
-                      {a.is_correct ? '✓ Correct' : '✗ Incorrect'} · {a.score_awarded ?? 0}/{a.max_points} pts
-                    </div>
-                    {a.auto_feedback && (
-                      <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, background: theme.surface2, padding: '6px 10px', borderRadius: 6 }}>
-                        💡 {a.auto_feedback}
+                      <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 2 }}>
+                        Your answer: <strong style={{ color: theme.text }}>{a.user_answer || '(no answer)'}</strong>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {!isPending && a.correct_answer && !isCorrect && (
+                        <div style={{ fontSize: 12, color: theme.accent3, marginBottom: 2 }}>
+                          Correct: <strong>{a.correct_answer}</strong>
+                        </div>
+                      )}
+                      <div style={{
+                        fontSize: 12,
+                        color: isPending ? '#a06400' : (isCorrect ? theme.accent3 : theme.accent5),
+                        marginBottom: 2
+                      }}>
+                        {isPending ? '⏳ Awaiting instructor review' : (isCorrect ? '✓ Correct' : '✗ Incorrect')}
+                        {' · '}{a.score_awarded ?? 0}/{a.max_points} pts
+                      </div>
+                      {a.auto_feedback && (
+                        <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, background: theme.surface2, padding: '6px 10px', borderRadius: 6 }}>
+                          💡 {a.auto_feedback}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
@@ -1604,6 +1709,26 @@ export default function StudentDashboard() {
             <Loading label="Loading profile…" />
           ) : (
             <>
+              {/* Avatar + photo upload */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+                {photoPreview || profile?.photo_url ? (
+                  <img src={photoPreview || resolvePhoto(profile?.photo_url)} alt={profileForm.username}
+                    style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${theme.border}` }}
+                    onError={(e) => { e.target.style.display = 'none'; }} />
+                ) : (
+                  <div style={{ width: 64, height: 64, borderRadius: '50%', background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 22, fontWeight: 600 }}>
+                    {(profileForm.username || '?').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={onPhotoChange} style={{ display: 'none' }} />
+                  <button type="button" style={{ ...btnPrimary, padding: '7px 12px', fontSize: 12 }} onClick={() => fileInputRef.current?.click()}>
+                    Change photo
+                  </button>
+                  <div style={{ fontSize: 11, color: theme.textDim, marginTop: 6 }}>JPG or PNG, up to 5MB.</div>
+                </div>
+              </div>
+
               {/* Read-only info */}
               <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
                 {[
@@ -1776,21 +1901,12 @@ const appShell = { display: 'flex', minHeight: '100vh', fontFamily: fontBody, ba
 const sidebar = { width: 240, minWidth: 240, background: token.ink, color: token.surface, display: 'flex', flexDirection: 'column', padding: '28px 0', position: 'fixed', height: '100vh', zIndex: 100, overflowY: 'auto' };
 const sidebarLogo = { padding: '0 24px 28px', borderBottom: `1px solid ${token.line}`, marginBottom: 20 };
 const logoBadge = { display: 'inline-flex', alignItems: 'center', gap: 10 };
-const logoIcon = { width: 36, height: 36, background: token.brass, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color: token.surface };
 const logoText = { fontFamily: fontDisplay, fontSize: 18, color: token.surface, letterSpacing: -0.3 };
 const logoSub = { fontSize: 10, color: token.brassSoft, letterSpacing: 1.5, textTransform: 'uppercase', display: 'block', marginTop: 1 };
 const navSection = { padding: '0 12px', marginBottom: 8 };
 const navLabel = { fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: token.brassSoft, padding: '8px 12px', marginBottom: 4 };
 const navItem = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: token.radiusSm, color: token.surface, fontSize: 14, cursor: 'pointer', transition: 'all 0.15s ease' };
-const navItemActive = { background: 'rgba(255,255,255,0.08)', color: token.surface, fontWeight: 600 };
 const navIcon = { width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 };
-const navBadge = { marginLeft: 'auto', background: token.accent5, color: '#fff', fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, minWidth: 18, textAlign: 'center' };
-const sidebarFooter = { marginTop: 'auto', padding: '20px 12px 0', borderTop: `1px solid ${token.line}` };
-const userCard = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: token.radiusSm, cursor: 'pointer', transition: 'background 0.15s', background: token.inkSoft };
-const avatar = { width: 36, height: 36, borderRadius: '50%', background: token.brass, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600, color: token.surface, flexShrink: 0 };
-const userInfo = { flex: 1, minWidth: 0 };
-const userName = { fontSize: 13, fontWeight: 500, color: token.surface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-const userRole = { fontSize: 11, color: token.brassSoft };
 const main = { marginLeft: 240, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', background: token.paper };
 const topbar = { display: 'flex', alignItems: 'center', gap: 16, padding: '20px 32px', borderBottom: `1px solid ${token.line}`, background: token.paper, position: 'sticky', top: 0, zIndex: 50 };
 const pageTitle = { fontFamily: fontDisplay, fontSize: 22, color: token.ink, letterSpacing: -0.3 };
@@ -1799,11 +1915,9 @@ const searchBox = { display: 'flex', alignItems: 'center', gap: 8, background: t
 const searchInput = { background: 'none', border: 'none', outline: 'none', color: token.ink, fontFamily: fontBody, fontSize: 13, width: '100%' };
 const iconBtn = { width: 38, height: 38, background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radiusSm, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', color: token.inkSoft };
 const notifDot = { position: 'absolute', top: 6, right: 6, width: 8, height: 8, background: theme.accent5, borderRadius: '50%', border: `2px solid ${theme.bg}` };
-const miniAvatar = { width: 26, height: 26, borderRadius: 6, background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, color: '#fff' };
 const content = { padding: '28px 32px', flex: 1 };
 const greetingTitle = { fontFamily: "'DM Serif Display', serif", fontSize: 26, color: theme.text, letterSpacing: -0.5, marginBottom: 4 };
 const greetingSub = { fontSize: 14, color: theme.textMuted };
-const statsGrid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 28 };
 const gridTwoOne = { display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20 };
 const courseGrid = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 28 };
 const courseGridWide = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 20 };
@@ -1838,7 +1952,6 @@ const th = { textAlign: 'left', padding: '10px 12px', color: theme.textDim, text
 const td = { padding: '10px 12px', borderTop: `1px solid ${theme.border}`, color: theme.text };
 const lessonsGrid = { display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) minmax(320px, 1.2fr)', gap: 20 };
 const lessonRow = { display: 'flex', gap: 12, padding: '10px 0', borderBottom: `1px solid ${theme.border}`, alignItems: 'flex-start' };
-const lessonText = { fontSize: 13, color: theme.textMuted, marginTop: 6, background: theme.surface2, padding: 10, borderRadius: 6 };
 const link = { fontSize: 13, color: theme.accent, display: 'inline-block', marginTop: 4, textDecoration: 'none' };
 const quizQuestion = { marginBottom: 20, padding: 16, background: theme.surface2, borderRadius: theme.radiusSm, border: `1px solid ${theme.border}` };
 const radioLabel = { display: 'block', marginBottom: 6, cursor: 'pointer', color: theme.text };
@@ -1848,7 +1961,6 @@ const gradeBadge = { display: 'inline-flex', alignItems: 'center', justifyConten
 const btnPrimary = { background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`, color: '#fff', border: 'none', borderRadius: theme.radiusSm, padding: '10px 18px', cursor: 'pointer', fontSize: 13, fontWeight: 500 };
 const btnGhost = { background: theme.surface2, border: `1px solid ${theme.border}`, color: theme.textMuted, borderRadius: theme.radiusSm, padding: '10px 18px', cursor: 'pointer', fontSize: 13, fontWeight: 500 };
 const btnSmall = { background: theme.surface2, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 6, padding: '6px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 500 };
-const alertBox = { padding: '10px 14px', borderRadius: theme.radiusSm, marginBottom: 14, fontSize: 13, border: `1px solid ${theme.border}` };
 const overlay = { position: 'fixed', inset: 0, background: 'rgba(13,15,20,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' };
 const modalBox = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 28, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' };
 const closeBtn = { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: theme.textMuted };
@@ -1857,10 +1969,6 @@ const formInput = { width: '100%', background: theme.surface2, border: `1px soli
 const emptyState = { textAlign: 'center', padding: '36px 20px', color: theme.textMuted };
 const emptyStateSmall = { textAlign: 'left', padding: '12px 4px', color: theme.textDim, fontSize: 12 };
 const statCard = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: theme.radius, padding: 20, position: 'relative', overflow: 'hidden' };
-const statIcon = { width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, marginBottom: 14 };
-const statValue = { fontFamily: "'DM Serif Display', serif", fontSize: 28, color: theme.text, letterSpacing: -0.5, lineHeight: 1, marginBottom: 4 };
-const statLabel = { fontSize: 13, color: theme.textMuted };
-const statTrend = { fontSize: 11, fontWeight: 500, marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 4 };
 const statusBadge = (s) => ({
   display: 'inline-block',
   padding: '3px 10px',
