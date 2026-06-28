@@ -667,6 +667,205 @@ exports.getStudentDetail = async (req, res) => {
   }
 };
 
+// ─── PDF BUILDER (zero-deps, A4 portrait, Helvetica) ──────
+// SPEC UC2.4.8 calls for "PDF or CSV" export of the student-progress report.
+// CSV is provided by exportCourseStudents; this adds the PDF variant using
+// just Node built-ins so we don't have to add a PDF library dependency.
+//
+// The output is a minimal but valid PDF 1.4 document. It handles a single
+// page of rows in a simple table layout and overflows to additional pages.
+function buildStudentsPdf(students, courseTitle) {
+  const PAGE_W = 595;       // A4 width  in points
+  const PAGE_H = 842;       // A4 height in points
+  const MARGIN = 36;
+  const ROW_H = 18;
+  const HEAD_Y = 90;        // y-coordinate of the table header
+  const COLS = [
+    { key: 'username',          label: 'Username',          x: MARGIN,        w: 110 },
+    { key: 'email',             label: 'Email',             x: MARGIN + 110,  w: 200 },
+    { key: 'enrollment_status', label: 'Status',            x: MARGIN + 310,  w: 60  },
+    { key: 'completion_percent',label: 'Completion %',      x: MARGIN + 370,  w: 70  },
+    { key: 'avg_score',         label: 'Avg Score',         x: MARGIN + 440,  w: 55  },
+    { key: 'is_at_risk',        label: 'Risk',              x: MARGIN + 495,  w: 40  },
+  ];
+
+  // Build PDF objects as a stream of `n 0 obj ... endobj`.
+  const objs = [];
+  const push = (body) => { objs.push(body); return objs.length; }; // 1-based id
+
+  // 1: Catalog
+  const catalogId = push('<< /Type /Catalog /Pages 2 0 R >>');
+  // placeholder; fix after Pages is added
+
+  // We will register Pages later. For now, reserve id 2.
+  objs.push(null);
+  const pagesId = 2;
+
+  // Font
+  const fontId = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const fontBoldId = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+
+  // Helper to escape PDF strings
+  const esc = (s) => String(s ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+
+  // ── Render content into one or more pages ──
+  const pages = []; // each page is an array of content-stream operators
+  const newPage = () => {
+    const ops = [];
+    pages.push(ops);
+    return ops;
+  };
+
+  // Page 1: title + table header
+  let ops = newPage();
+  ops.push('BT');
+  ops.push('/F2 16 Tf');           // bold
+  ops.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 60} Tm`);
+  ops.push(`(Student Progress Report) Tj`);
+  ops.push('/F1 11 Tf');
+  ops.push(`0 0 0 rg`);
+  ops.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 78} Tm`);
+  ops.push(`(Course: ${esc(courseTitle || 'Untitled')}) Tj`);
+  ops.push(`(Generated: ${esc(new Date().toISOString())}) Tj`);
+
+  // Table header bar
+  ops.push('ET');
+  ops.push(`${MARGIN} ${PAGE_H - HEAD_Y - 4} ${PAGE_W - 2 * MARGIN} 18 re f`);
+  ops.push(`0.93 0.9 0.85 rg`);
+
+  ops.push('BT');
+  ops.push('/F2 10 Tf');
+  ops.push(`0.27 0.15 0.05 rg`);
+  for (const col of COLS) {
+    ops.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - HEAD_Y + 5} Tm`);
+    ops.push(`(${esc(col.label)}) Tj`);
+  }
+  ops.push('ET');
+
+  // Rows — each row prints below the previous; new page when out of space.
+  const ROW_START_Y = HEAD_Y + 14;
+  let rowIndex = 0;
+  const rowCapacity = Math.floor((PAGE_H - MARGIN - ROW_START_Y - ROW_H) / ROW_H);
+
+  const printRow = (s, y) => {
+    const cur = pages[pages.length - 1];
+    cur.push('BT');
+    cur.push('/F1 9 Tf');
+    cur.push(`0 0 0 rg`);
+    for (const col of COLS) {
+      let v = s[col.key];
+      if (col.key === 'is_at_risk') v = v ? 'YES' : 'no';
+      if (col.key === 'completion_percent' || col.key === 'avg_score')
+        v = v == null ? '—' : Number(v).toFixed(1);
+      // truncate long values to fit column
+      const txt = String(v ?? '');
+      const max = Math.max(1, Math.floor((col.w - 8) / 4.5));
+      const truncated = txt.length > max ? txt.slice(0, max - 1) + '…' : txt;
+      cur.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - y} Tm`);
+      cur.push(`(${esc(truncated)}) Tj`);
+    }
+    cur.push('ET');
+    // Row separator
+    cur.push(`0.85 0.83 0.78 rg`);
+    cur.push(`${MARGIN} ${PAGE_H - y - 12} ${PAGE_W - 2 * MARGIN} 0.5 re f`);
+    cur.push(`0 0 0 rg`);
+  };
+
+  for (const s of students) {
+    if (rowIndex > 0 && rowIndex % rowCapacity === 0) {
+      // start new page with repeated header
+      const newOps = newPage();
+      newOps.push('BT');
+      newOps.push('/F2 12 Tf');
+      newOps.push(`0.27 0.15 0.05 rg`);
+      newOps.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 50} Tm`);
+      newOps.push(`(Student Progress Report - continued) Tj`);
+      newOps.push('ET');
+      // table header again
+      newOps.push(`${MARGIN} ${PAGE_H - HEAD_Y - 4} ${PAGE_W - 2 * MARGIN} 18 re f`);
+      newOps.push(`0.93 0.9 0.85 rg`);
+      newOps.push('BT');
+      newOps.push('/F2 10 Tf');
+      newOps.push(`0.27 0.15 0.05 rg`);
+      for (const col of COLS) {
+        newOps.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - HEAD_Y + 5} Tm`);
+        newOps.push(`(${esc(col.label)}) Tj`);
+      }
+      newOps.push('ET');
+    }
+    const pageRow = rowIndex % rowCapacity;
+    printRow(s, ROW_START_Y + pageRow * ROW_H);
+    rowIndex++;
+  }
+
+  // Build Page objects (one per content stream)
+  const pageIds = [];
+  for (let i = 0; i < pages.length; i++) {
+    const contentStream = pages[i].join('\n');
+    const contentObjId = push(`<< /Length ${Buffer.byteLength(contentStream, 'binary')} >>\nstream\n${contentStream}\nendstream`);
+    const pageObjId = push(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentObjId} 0 R >>`);
+    pageIds.push(pageObjId);
+  }
+
+  // Pages dict (now we can fill id 2)
+  objs[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+
+  // ── Serialise ──
+  let body = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  const offsets = [0]; // 1-based page object table; index 0 unused
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(Buffer.byteLength(body, 'binary'));
+    body += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(body, 'binary');
+  body += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objs.length; i++) {
+    body += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objs.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, 'binary');
+}
+
+// Spec UC2.4.8 — export the enrolled-students progress report as PDF.
+// Returns a minimal but valid PDF document so no external library is needed.
+exports.exportCourseStudentsPdf = async (req, res) => {
+  const { courseId } = req.params;
+  try {
+    const [[course]] = await db.execute(
+      `SELECT title FROM course WHERE course_id=?`, [courseId]
+    );
+    const [students] = await db.execute(
+      `SELECT u.username, u.email,
+              e.status AS enrollment_status,
+              ROUND(e.completion_percent, 2) AS completion_percent,
+              sp.gpa, sp.is_at_risk,
+              COUNT(DISTINCT qa.quiz_attempt_id) AS quizzes_taken,
+              ROUND(COALESCE(AVG(qa.score),0), 2) AS avg_score
+       FROM enrollment e
+       JOIN user u ON e.user_id = u.user_id
+       LEFT JOIN student_profile sp ON u.user_id = sp.user_id
+       LEFT JOIN quiz_attempt qa ON qa.user_id = u.user_id
+       WHERE e.course_id = ? AND e.status = 'active'
+       GROUP BY u.user_id
+       ORDER BY avg_score ASC`, [courseId]
+    );
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'No students to export' });
+    }
+    const pdf = buildStudentsPdf(students, course?.title || '');
+    const filename = `course_${courseId}_students_${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // Stream the enrolled-students list for a course as a CSV file. Spec UC2.4.8
 // requires the instructor be able to export the report as PDF or CSV.
 exports.exportCourseStudents = async (req, res) => {

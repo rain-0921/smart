@@ -106,6 +106,7 @@ export const instrUpdateFeedback    = (feedbackId, data) => API.put(`/instructor
 export const instrDeleteFeedback    = (feedbackId)   => API.delete(`/instructor/feedback/${feedbackId}`);
 export const instrGetStudents       = (courseId)     => API.get(`/instructor/courses/${courseId}/students`);
 export const instrExportStudents    = (courseId)     => API.get(`/instructor/courses/${courseId}/students/export`, { responseType: 'blob' });
+export const instrExportStudentsPdf = (courseId)     => API.get(`/instructor/courses/${courseId}/students/export.pdf`, { responseType: 'blob' });
 export const instrGetStudentDetail  = (studentId)    => API.get(`/instructor/students/${studentId}`);
 export const instrGetPending        = ()             => API.get('/instructor/submissions/pending');
 export const instrGradeSubmission   = (attemptId, data) => API.patch(`/instructor/submissions/${attemptId}/grade`, data);

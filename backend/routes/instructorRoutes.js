@@ -48,6 +48,7 @@ router.delete('/feedback/:feedbackId',           i.deleteQuizFeedback);
 // Student Progress & Grading
 router.get('/courses/:courseId/students',        i.getCourseStudents);
 router.get('/courses/:courseId/students/export', i.exportCourseStudents);
+router.get('/courses/:courseId/students/export.pdf', i.exportCourseStudentsPdf);
 router.get('/students/:studentId',               i.getStudentDetail);
 router.get('/submissions/pending',               i.getPendingSubmissions);
 router.patch('/submissions/:attemptId/grade',    i.gradeSubmission);
