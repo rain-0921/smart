@@ -89,8 +89,10 @@ export const instrUpdateCourse      = (id, data)     => API.put(`/instructor/cou
 export const instrDeleteCourse      = (id)           => API.delete(`/instructor/courses/${id}`);
 export const instrGetModules        = (courseId)     => API.get(`/instructor/courses/${courseId}/modules`);
 export const instrCreateModule      = (courseId, data) => API.post(`/instructor/courses/${courseId}/modules`, data);
+export const instrUpdateModule      = (moduleId, data) => API.put(`/instructor/modules/${moduleId}`, data);
 export const instrDeleteModule      = (moduleId)     => API.delete(`/instructor/modules/${moduleId}`);
 export const instrCreateLesson      = (moduleId, data) => API.post(`/instructor/modules/${moduleId}/lessons`, data);
+export const instrUpdateLesson      = (lessonId, data) => API.put(`/instructor/lessons/${lessonId}`, data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const instrDeleteLesson      = (lessonId)     => API.delete(`/instructor/lessons/${lessonId}`);
 export const instrGetQuizzes        = (courseId)     => API.get(`/instructor/courses/${courseId}/quizzes`);
 export const instrCreateQuiz        = (courseId, data) => API.post(`/instructor/courses/${courseId}/quizzes`, data);

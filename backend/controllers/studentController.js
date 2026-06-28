@@ -183,7 +183,7 @@ exports.getCourseModules = async (req, res) => {
               mp.status AS progress_status, mp.completion_percentage
        FROM module m
        LEFT JOIN module_progress mp ON mp.module_id = m.module_id AND mp.user_id = ?
-       WHERE m.course_id = ?
+       WHERE m.course_id = ? AND m.status = 'published'
        ORDER BY m.sort_order`,
       [userId, courseId]
     );
@@ -191,7 +191,7 @@ exports.getCourseModules = async (req, res) => {
       const [lessons] = await db.execute(
         `SELECT lesson_id, title, content_type, content_url, content_text,
                 sort_order, duration_minutes, status
-         FROM lesson WHERE module_id = ? ORDER BY sort_order`,
+         FROM lesson WHERE module_id = ? AND status = 'published' ORDER BY sort_order`,
         [mod.module_id]
       );
       mod.lessons = lessons;

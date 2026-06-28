@@ -128,7 +128,8 @@ CREATE TABLE `module` (
   `course_id` int(11) NOT NULL,
   `title` varchar(150) NOT NULL,
   `description` text DEFAULT NULL,
-  `sort_order` int(11) NOT NULL DEFAULT 0
+  `sort_order` int(11) NOT NULL DEFAULT 0,
+  `status` enum('draft','published','archived') NOT NULL DEFAULT 'published'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

@@ -12,6 +12,51 @@ async function getActiveEnrolledStudents(courseId) {
   return rows.map(r => r.user_id);
 }
 
+// Verifies the requesting instructor owns the course identified by courseId.
+// Throws 403 if not found.
+async function requireCourseOwnership(courseId, userId) {
+  const [[row]] = await db.execute(
+    'SELECT 1 FROM course WHERE course_id=? AND instructor_id=?',
+    [courseId, userId]
+  );
+  if (!row) throw { status: 404, message: 'Course not found' };
+}
+
+// Verifies the quiz belongs to a course owned by the requesting instructor.
+// Throws 403 if not found.
+async function requireQuizOwnership(quizId, userId) {
+  const [[row]] = await db.execute(
+    `SELECT 1 FROM quiz q JOIN course c ON q.course_id=c.course_id
+     WHERE q.quiz_id=? AND c.instructor_id=?`,
+    [quizId, userId]
+  );
+  if (!row) throw { status: 404, message: 'Quiz not found' };
+}
+
+// Verifies the question belongs to a quiz in a course owned by the requesting instructor.
+async function requireQuizOwnershipByQuestion(questionId, userId) {
+  const [[row]] = await db.execute(
+    `SELECT 1 FROM question qq
+     JOIN quiz q ON qq.quiz_id=q.quiz_id
+     JOIN course c ON q.course_id=c.course_id
+     WHERE qq.question_id=? AND c.instructor_id=?`,
+    [questionId, userId]
+  );
+  if (!row) throw { status: 404, message: 'Question not found' };
+}
+
+// Verifies the feedback belongs to a quiz in a course owned by the requesting instructor.
+async function requireQuizOwnershipByFeedback(feedbackId, userId) {
+  const [[row]] = await db.execute(
+    `SELECT 1 FROM quiz_feedback qf
+     JOIN quiz q ON qf.quiz_id=q.quiz_id
+     JOIN course c ON q.course_id=c.course_id
+     WHERE qf.quiz_feedback_id=? AND c.instructor_id=?`,
+    [feedbackId, userId]
+  );
+  if (!row) throw { status: 404, message: 'Feedback band not found' };
+}
+
 // ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
@@ -207,8 +252,10 @@ exports.deleteCourse = async (req, res) => {
 
 // ─── MODULES ─────────────────────────────────────────────
 exports.getCourseModules = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   try {
+    await requireCourseOwnership(courseId, userId);
     const [modules] = await db.execute(
       `SELECT * FROM module WHERE course_id=? ORDER BY sort_order`, [courseId]
     );
@@ -220,15 +267,18 @@ exports.getCourseModules = async (req, res) => {
     }
     res.json(modules);
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.createModule = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   const { title, description } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
+    await requireCourseOwnership(courseId, userId);
     const [[{ maxOrder }]] = await db.execute(
       `SELECT COALESCE(MAX(sort_order),0) AS maxOrder FROM module WHERE course_id=?`, [courseId]
     );
@@ -238,13 +288,41 @@ exports.createModule = async (req, res) => {
     );
     res.status(201).json({ message: 'Module created', module_id: result.insertId });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.updateModule = async (req, res) => {
+  const userId = req.user.user_id;
+  const { moduleId } = req.params;
+  const { title, description } = req.body;
+  if (!title) return res.status(400).json({ message: 'Title is required' });
+  try {
+    const [[row]] = await db.execute(
+      `SELECT m.module_id FROM module m JOIN course c ON m.course_id=c.course_id
+       WHERE m.module_id=? AND c.instructor_id=?`, [moduleId, userId]
+    );
+    if (!row) return res.status(404).json({ message: 'Module not found' });
+    await db.execute(
+      `UPDATE module SET title=?, description=? WHERE module_id=?`,
+      [title, description||null, moduleId]
+    );
+    res.json({ message: 'Module updated' });
+  } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.deleteModule = async (req, res) => {
+  const userId = req.user.user_id;
   const { moduleId } = req.params;
   try {
+    const [[row]] = await db.execute(
+      `SELECT m.module_id FROM module m JOIN course c ON m.course_id=c.course_id
+       WHERE m.module_id=? AND c.instructor_id=?`, [moduleId, userId]
+    );
+    if (!row) return res.status(404).json({ message: 'Module not found' });
     await db.execute(`DELETE FROM module WHERE module_id=?`, [moduleId]);
     res.json({ message: 'Module deleted' });
   } catch (error) {
@@ -254,16 +332,20 @@ exports.deleteModule = async (req, res) => {
 
 // ─── LESSONS / MATERIALS ─────────────────────────────────
 exports.createLesson = async (req, res) => {
+  const userId = req.user.user_id;
   const { moduleId } = req.params;
   const { title, content_type, content_url, content_text, duration_minutes } = req.body;
   if (!title)
     return res.status(400).json({ message: 'Title is required' });
 
   try {
-    // If the request carries an uploaded file (multipart/form-data from the
-    // handleMaterialUpload middleware), store it on disk and infer the
-    // content_type from its mimetype. Otherwise fall back to the caller-supplied
-    // content_type/content_url pair (e.g. YouTube link or external URL).
+    // Verify the module belongs to one of this instructor's courses
+    const [[mod]] = await db.execute(
+      `SELECT m.module_id FROM module m JOIN course c ON m.course_id=c.course_id
+       WHERE m.module_id=? AND c.instructor_id=?`, [moduleId, userId]
+    );
+    if (!mod) return res.status(404).json({ message: 'Module not found' });
+
     let resolvedContentType = content_type;
     let resolvedContentUrl  = content_url || null;
     let resolvedContentText = content_text || null;
@@ -296,9 +378,52 @@ exports.createLesson = async (req, res) => {
   }
 };
 
+exports.updateLesson = async (req, res) => {
+  const userId = req.user.user_id;
+  const { lessonId } = req.params;
+  const { title, content_type, content_url, content_text, duration_minutes } = req.body;
+  if (!title) return res.status(400).json({ message: 'Title is required' });
+  try {
+    const [[row]] = await db.execute(
+      `SELECT l.lesson_id FROM lesson l
+       JOIN module m ON l.module_id=m.module_id
+       JOIN course c ON m.course_id=c.course_id
+       WHERE l.lesson_id=? AND c.instructor_id=?`, [lessonId, userId]
+    );
+    if (!row) return res.status(404).json({ message: 'Lesson not found' });
+
+    let resolvedContentType = content_type;
+    let resolvedContentUrl  = content_url || null;
+    let resolvedContentText = content_text || null;
+
+    if (req.file) {
+      resolvedContentType = inferContentType(req.file.mimetype);
+      resolvedContentUrl  = `/uploads/lessons/${req.file.filename}`;
+    }
+
+    await db.execute(
+      `UPDATE lesson SET title=?, content_type=?, content_url=?, content_text=?,
+       duration_minutes=? WHERE lesson_id=?`,
+      [title, resolvedContentType, resolvedContentUrl, resolvedContentText,
+       duration_minutes||null, lessonId]
+    );
+    res.json({ message: 'Lesson updated' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 exports.deleteLesson = async (req, res) => {
+  const userId = req.user.user_id;
   const { lessonId } = req.params;
   try {
+    const [[row]] = await db.execute(
+      `SELECT l.lesson_id FROM lesson l
+       JOIN module m ON l.module_id=m.module_id
+       JOIN course c ON m.course_id=c.course_id
+       WHERE l.lesson_id=? AND c.instructor_id=?`, [lessonId, userId]
+    );
+    if (!row) return res.status(404).json({ message: 'Lesson not found' });
     await db.execute(`DELETE FROM lesson WHERE lesson_id=?`, [lessonId]);
     res.json({ message: 'Lesson deleted' });
   } catch (error) {
@@ -308,10 +433,15 @@ exports.deleteLesson = async (req, res) => {
 
 // ─── QUIZZES ─────────────────────────────────────────────
 exports.getCourseQuizzes = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   try {
+    await requireCourseOwnership(courseId, userId);
     const [quizzes] = await db.execute(
-      `SELECT q.*, COUNT(qq.question_id) AS question_count,
+      `SELECT q.quiz_id, q.course_id, q.created_by, q.title, q.description, q.status,
+              q.due_date, q.time_limit_minutes, q.max_attempts, q.randomize_questions,
+              q.num_questions_per_attempt, q.submission_type, q.created_at,
+              COUNT(DISTINCT qq.question_id) AS question_count,
               COUNT(DISTINCT qa.quiz_attempt_id) AS attempt_count
        FROM quiz q
        LEFT JOIN question qq ON qq.quiz_id = q.quiz_id
@@ -322,6 +452,7 @@ exports.getCourseQuizzes = async (req, res) => {
     );
     res.json(quizzes);
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -334,6 +465,7 @@ exports.createQuiz = async (req, res) => {
           num_questions_per_attempt } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
+    await requireCourseOwnership(courseId, userId);
     const [result] = await db.execute(
       `INSERT INTO quiz (course_id, created_by, title, description, due_date,
        time_limit_minutes, max_attempts, randomize_questions, submission_type,
@@ -345,16 +477,19 @@ exports.createQuiz = async (req, res) => {
     );
     res.status(201).json({ message: 'Quiz created', quiz_id: result.insertId });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.updateQuiz = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   const { title, description, due_date, time_limit_minutes,
           max_attempts, randomize_questions, submission_type,
           num_questions_per_attempt, status } = req.body;
   try {
+    await requireQuizOwnership(quizId, userId);
     // Grab current status + course_id before update (needed for publish check + notify)
     const [[existing]] = await db.execute(
       `SELECT status, course_id FROM quiz WHERE quiz_id=?`, [quizId]
@@ -398,39 +533,48 @@ exports.updateQuiz = async (req, res) => {
 
     res.json({ message: 'Quiz updated' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.deleteQuiz = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   try {
+    await requireQuizOwnership(quizId, userId);
     await db.execute(`DELETE FROM quiz WHERE quiz_id=?`, [quizId]);
     res.json({ message: 'Quiz deleted' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 // ─── QUESTIONS ───────────────────────────────────────────
 exports.getQuizQuestions = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   try {
+    await requireQuizOwnership(quizId, userId);
     const [questions] = await db.execute(
       `SELECT * FROM question WHERE quiz_id=? ORDER BY sort_order`, [quizId]
     );
     res.json(questions);
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.addQuestion = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   const { question_type, question_text, options, correct_answer, points, improvement_tip } = req.body;
   if (!question_type || !question_text || !correct_answer)
     return res.status(400).json({ message: 'Question type, text and correct answer are required' });
   try {
+    await requireQuizOwnership(quizId, userId);
     const [[{ maxOrder }]] = await db.execute(
       `SELECT COALESCE(MAX(sort_order),0) AS maxOrder FROM question WHERE quiz_id=?`, [quizId]
     );
@@ -444,16 +588,20 @@ exports.addQuestion = async (req, res) => {
     );
     res.status(201).json({ message: 'Question added' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.deleteQuestion = async (req, res) => {
+  const userId = req.user.user_id;
   const { questionId } = req.params;
   try {
+    await requireQuizOwnershipByQuestion(questionId, userId);
     await db.execute(`DELETE FROM question WHERE question_id=?`, [questionId]);
     res.json({ message: 'Question deleted' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -462,9 +610,11 @@ exports.deleteQuestion = async (req, res) => {
 // improvement_tip (or any other field) after the quiz has been published.
 // Spec UC2.4.6 caps feedback text at 500 characters per question.
 exports.updateQuestion = async (req, res) => {
+  const userId = req.user.user_id;
   const { questionId } = req.params;
   const { question_type, question_text, options, correct_answer, points, improvement_tip, sort_order } = req.body;
   try {
+    await requireQuizOwnershipByQuestion(questionId, userId);
     const [[existing]] = await db.execute(
       `SELECT q.question_id, COUNT(qa.quiz_attempt_id) AS attempt_count
        FROM question q
@@ -504,14 +654,17 @@ exports.updateQuestion = async (req, res) => {
       attempted_already: existing.attempt_count > 0
     });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 // ─── QUIZ FEEDBACK (score-band messages) ─────────────────
 exports.getQuizFeedback = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   try {
+    await requireQuizOwnership(quizId, userId);
     const [feedback] = await db.execute(
       `SELECT quiz_feedback_id, quiz_id, min_score, max_score, feedback_message
        FROM quiz_feedback WHERE quiz_id=? ORDER BY min_score ASC`, [quizId]
@@ -522,11 +675,13 @@ exports.getQuizFeedback = async (req, res) => {
     );
     res.json({ feedback, alreadyAttempted: attemptCount > 0 });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.addQuizFeedback = async (req, res) => {
+  const userId = req.user.user_id;
   const { quizId } = req.params;
   const { min_score, max_score, feedback_message } = req.body;
   if (min_score === undefined || max_score === undefined || !feedback_message)
@@ -536,6 +691,7 @@ exports.addQuizFeedback = async (req, res) => {
   if (feedback_message.length > 500)
     return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
   try {
+    await requireQuizOwnership(quizId, userId);
     const [result] = await db.execute(
       `INSERT INTO quiz_feedback (quiz_id, min_score, max_score, feedback_message)
        VALUES (?,?,?,?)`,
@@ -543,11 +699,13 @@ exports.addQuizFeedback = async (req, res) => {
     );
     res.status(201).json({ message: 'Feedback band added', quiz_feedback_id: result.insertId });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.updateQuizFeedback = async (req, res) => {
+  const userId = req.user.user_id;
   const { feedbackId } = req.params;
   const { min_score, max_score, feedback_message } = req.body;
   if (min_score === undefined || max_score === undefined || !feedback_message)
@@ -557,6 +715,7 @@ exports.updateQuizFeedback = async (req, res) => {
   if (feedback_message.length > 500)
     return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
   try {
+    await requireQuizOwnershipByFeedback(feedbackId, userId);
     await db.execute(
       `UPDATE quiz_feedback SET min_score=?, max_score=?, feedback_message=?
        WHERE quiz_feedback_id=?`,
@@ -564,24 +723,30 @@ exports.updateQuizFeedback = async (req, res) => {
     );
     res.json({ message: 'Feedback band updated' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 exports.deleteQuizFeedback = async (req, res) => {
+  const userId = req.user.user_id;
   const { feedbackId } = req.params;
   try {
+    await requireQuizOwnershipByFeedback(feedbackId, userId);
     await db.execute(`DELETE FROM quiz_feedback WHERE quiz_feedback_id=?`, [feedbackId]);
     res.json({ message: 'Feedback band deleted' });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 // ─── STUDENT PROGRESS ────────────────────────────────────
 exports.getCourseStudents = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   try {
+    await requireCourseOwnership(courseId, userId);
     const [students] = await db.execute(
       `SELECT u.user_id, u.username, u.email,
               e.status AS enrollment_status, e.completion_percent, e.enrolled_at,
@@ -598,6 +763,7 @@ exports.getCourseStudents = async (req, res) => {
     );
     res.json(students);
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -832,8 +998,10 @@ function buildStudentsPdf(students, courseTitle) {
 // Spec UC2.4.8 — export the enrolled-students progress report as PDF.
 // Returns a minimal but valid PDF document so no external library is needed.
 exports.exportCourseStudentsPdf = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   try {
+    await requireCourseOwnership(courseId, userId);
     const [[course]] = await db.execute(
       `SELECT title FROM course WHERE course_id=?`, [courseId]
     );
@@ -862,6 +1030,7 @@ exports.exportCourseStudentsPdf = async (req, res) => {
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -869,8 +1038,10 @@ exports.exportCourseStudentsPdf = async (req, res) => {
 // Stream the enrolled-students list for a course as a CSV file. Spec UC2.4.8
 // requires the instructor be able to export the report as PDF or CSV.
 exports.exportCourseStudents = async (req, res) => {
+  const userId = req.user.user_id;
   const { courseId } = req.params;
   try {
+    await requireCourseOwnership(courseId, userId);
     const [students] = await db.execute(
       `SELECT u.username, u.email,
               e.status AS enrollment_status,
@@ -923,13 +1094,14 @@ exports.getPendingSubmissions = async (req, res) => {
       `SELECT qa.quiz_attempt_id, qa.status, qa.created_at, qa.score,
               u.username AS student_name, u.email AS student_email,
               q.title AS quiz_title, q.submission_type, c.title AS course_title,
-              a.file_url, a.user_answer AS text_note
+              MAX(a.file_url) AS file_url, MAX(a.user_answer) AS text_note
        FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
        JOIN user u ON qa.user_id = u.user_id
-       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id AND a.file_url IS NOT NULL
-       WHERE q.created_by=? AND qa.status IN ('submitted','in_progress')
+       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id
+       WHERE c.instructor_id=? AND qa.status IN ('submitted','in_progress')
+       GROUP BY qa.quiz_attempt_id
        ORDER BY qa.created_at ASC`, [userId]
     );
     res.json(submissions);
@@ -939,20 +1111,32 @@ exports.getPendingSubmissions = async (req, res) => {
 };
 
 exports.gradeSubmission = async (req, res) => {
+  const userId = req.user.user_id;
   const { attemptId } = req.params;
   const { score, feedback } = req.body;
   if (score === undefined || score === null)
     return res.status(400).json({ message: 'Score is required' });
   try {
+    // Verify this submission belongs to a quiz in one of this instructor's courses
+    const [[row]] = await db.execute(
+      `SELECT qa.quiz_attempt_id FROM quiz_attempt qa
+       JOIN quiz q ON qa.quiz_id = q.quiz_id
+       JOIN course c ON q.course_id = c.course_id
+       WHERE qa.quiz_attempt_id=? AND c.instructor_id=?`,
+      [attemptId, userId]
+    );
+    if (!row) return res.status(404).json({ message: 'Submission not found' });
+
+    // Update the quiz_attempt score and status
     await db.execute(
       `UPDATE quiz_attempt SET score=?, status='graded', end_time=NOW() WHERE quiz_attempt_id=?`,
       [score, attemptId]
     );
-    if (feedback) {
-      await db.execute(
-        `UPDATE answer SET feedback=? WHERE quiz_attempt_id=?`, [feedback, attemptId]
-      );
-    }
+    // Update all answer records for this attempt with instructor feedback
+    await db.execute(
+      `UPDATE answer SET feedback=? WHERE quiz_attempt_id=?`,
+      [feedback || null, attemptId]
+    );
     // Notify student
     const [attempt] = await db.execute(
       `SELECT qa.user_id, q.title FROM quiz_attempt qa
@@ -981,35 +1165,35 @@ exports.getAnalytics = async (req, res) => {
   const { courseId } = req.params;
   const { from, to } = req.query;
 
-  // Build a date range predicate when both endpoints provided.
-  const range = [];
-  let rangeClause = '';
-  if (from && to) {
-    range.push(from, to);
-    rangeClause = 'AND DATE(qa.created_at) BETWEEN ? AND ?';
-  } else if (from) {
-    range.push(from);
-    rangeClause = 'AND DATE(qa.created_at) >= ?';
-  } else if (to) {
-    range.push(to);
-    rangeClause = 'AND DATE(qa.created_at) <= ?';
-  }
-
-  const enrRange = [];
-  let enrRangeClause = '';
-  if (from && to) { enrRange.push(from, to); enrRangeClause = 'AND DATE(enrolled_at) BETWEEN ? AND ?'; }
-  else if (from) { enrRange.push(from); enrRangeClause = 'AND DATE(enrolled_at) >= ?'; }
-  else if (to) { enrRange.push(to); enrRangeClause = 'AND DATE(enrolled_at) <= ?'; }
-
   try {
+    await requireCourseOwnership(courseId, userId);
+
+    // Build a date range predicate when both endpoints provided.
+    const range = [];
+    let rangeClause = '';
+    if (from && to) {
+      range.push(from, to);
+      rangeClause = 'AND DATE(qa.created_at) BETWEEN ? AND ?';
+    } else if (from) {
+      range.push(from);
+      rangeClause = 'AND DATE(qa.created_at) >= ?';
+    } else if (to) {
+      range.push(to);
+      rangeClause = 'AND DATE(qa.created_at) <= ?';
+    }
+
+    const enrRange = [];
+    let enrRangeClause = '';
+    if (from && to) { enrRange.push(from, to); enrRangeClause = 'AND DATE(enrolled_at) BETWEEN ? AND ?'; }
+    else if (from) { enrRange.push(from); enrRangeClause = 'AND DATE(enrolled_at) >= ?'; }
+    else if (to) { enrRange.push(to); enrRangeClause = 'AND DATE(enrolled_at) <= ?'; }
+
     // Average score per quiz, scoped to the date range.
     const [quizStats] = await db.execute(
       `SELECT q.title, COALESCE(AVG(qa.score),0) AS avg_score,
               COUNT(qa.quiz_attempt_id) AS attempts
        FROM quiz q
-       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id
-                                AND qa.status='graded'
-                                ${rangeClause ? rangeClause.replace('qa.created_at', 'qa.created_at') : ''}
+       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.status='graded' ${rangeClause}
        WHERE q.course_id=? AND q.created_by=?
        GROUP BY q.quiz_id`, [...range, courseId, userId]
     );
@@ -1034,7 +1218,7 @@ exports.getAnalytics = async (req, res) => {
        FROM quiz_attempt qa
        JOIN quiz q ON q.quiz_id = qa.quiz_id
        WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}`,
-      [...range, courseId, userId]
+      [courseId, userId, ...range]
     );
 
     // Submission rate: percentage of active enrollments that have at least

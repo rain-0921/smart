@@ -21,11 +21,13 @@ router.delete('/courses/:id',                    i.deleteCourse);
 // Modules
 router.get('/courses/:courseId/modules',         i.getCourseModules);
 router.post('/courses/:courseId/modules',        i.createModule);
+router.put('/modules/:moduleId',                i.updateModule);
 router.delete('/modules/:moduleId',              i.deleteModule);
 
 // Lessons
 router.post('/modules/:moduleId/lessons',       handleMaterialUpload, i.createLesson);
-router.delete('/lessons/:lessonId',              i.deleteLesson);
+router.put('/lessons/:lessonId',                handleMaterialUpload, i.updateLesson);
+router.delete('/lessons/:lessonId',             i.deleteLesson);
 
 // Quizzes
 router.get('/courses/:courseId/quizzes',         i.getCourseQuizzes);

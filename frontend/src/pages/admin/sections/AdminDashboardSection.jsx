@@ -10,10 +10,11 @@ export default function AdminDashboardSection({ dashboard, loading }) {
   return (
     <div className="adm-card">
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 28 }}>
-        <StatCard label="Total Users"       value={dashboard.stats?.totalUsers || 0}       accent={token.ink}     icon="people" />
-        <StatCard label="Total Courses"     value={dashboard.stats?.totalCourses || 0}   accent={token.indigo}  icon="doc" />
-        <StatCard label="Total Enrollments" value={dashboard.stats?.totalEnrollments || 0} accent={token.good}  icon="clipboard" />
-        <StatCard label="Active Students"   value={dashboard.stats?.activeStudents || 0} accent={token.brass}   icon="spark" />
+        {/* Support both camelCase (frontend convention) and snake_case (backend convention) */}
+        <StatCard label="Total Users"       value={dashboard.stats?.totalUsers ?? dashboard.stats?.total_users ?? 0}   accent={token.ink}     icon="people" />
+        <StatCard label="Total Courses"     value={dashboard.stats?.totalCourses ?? dashboard.stats?.total_courses ?? 0} accent={token.indigo}  icon="doc" />
+        <StatCard label="Total Enrollments" value={dashboard.stats?.totalEnrollments ?? dashboard.stats?.total_enrollments ?? 0} accent={token.good}  icon="clipboard" />
+        <StatCard label="Active Students"   value={dashboard.stats?.activeStudents ?? dashboard.stats?.active_students ?? 0} accent={token.brass}   icon="spark" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
