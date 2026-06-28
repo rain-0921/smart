@@ -1279,7 +1279,7 @@ exports.gradeSubmission = async (req, res) => {
           [user_id]
         );
         const nowAtRisk = newGpa < 2.0 ? 1 : 0;
-        if (nowAtRisk === 1 && wasAtRisk.wasAtRisk !== 1) {
+        if (nowAtRisk === 1 && wasAtRisk !== 1) {
           await db.execute(
             `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
              VALUES (?, ?, ?, ?, ?, ?)`,

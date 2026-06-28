@@ -135,6 +135,7 @@ export default function StudentDashboard() {
     setActiveQuiz(null);
     setQuizResult(null);
     setSelectedLesson(null);
+    setAssignmentData(null);
     setModules([]);
     setQuizzes([]);
     setGrades([]);
@@ -155,6 +156,23 @@ export default function StudentDashboard() {
       setQuizzes(q.data);
       setGrades(g.data);
     } catch { showAlert('Failed to load course content', 'error'); }
+  };
+
+  // Open a deadline straight from the dashboard — opens the course first,
+  // then immediately starts the quiz or assignment so the student lands in
+  // the right place without having to find it again in the lesson list.
+  const handleOpenDeadline = async (deadline) => {
+    const course = dashboard.enrollments.find(e => e.course_id === deadline.course_id);
+    if (!course) {
+      showAlert('Course not found for this deadline.', 'error');
+      return;
+    }
+    await openCourse(course);
+    if (deadline.submission_type && deadline.submission_type !== 'online_quiz') {
+      await handleOpenAssignment(deadline.quiz_id);
+    } else {
+      await handleStartQuiz(deadline.quiz_id);
+    }
   };
 
   // Enroll
@@ -234,9 +252,9 @@ export default function StudentDashboard() {
       const formData = new FormData();
       formData.append('file', assignmentFile);
       if (assignmentNote) formData.append('text_note', assignmentNote);
-      await studentSubmitAssignment(assignmentData.quiz_id, formData);
+      await studentSubmitAssignment(assignmentData.quiz.quiz_id, formData);
       showAlert('Assignment submitted successfully!');
-      const res = await studentGetAssignment(assignmentData.quiz_id);
+      const res = await studentGetAssignment(assignmentData.quiz.quiz_id);
       setAssignmentData(res.data);
       setAssignmentFile(null);
       setAssignmentNote('');
@@ -425,6 +443,8 @@ export default function StudentDashboard() {
           notifications={notifications}
           search={search}
           onOpenCourse={openCourse}
+          onOpenDeadline={handleOpenDeadline}
+          onViewGrade={handleOpenGradeDetail}
           onMarkRead={markRead}
         />
       )}

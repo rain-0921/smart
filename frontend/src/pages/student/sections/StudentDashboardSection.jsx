@@ -1,9 +1,9 @@
 import { theme } from '../../../theme';
 import { Empty } from '../../../components/shared';
-import { courseTones } from '../../../theme';
+import { courseTones, token } from '../../../theme';
 import { StudentStatCard, greetingTitle, greetingSub, gridTwoOne, sectionTitle, card, emptyState, quizItem, quizIcon, quizInfo, quizName, quizMeta, quizStatus, statusPill, notifItem, notifItemUnread, notifDotSm, notifTitle, notifMsg, notifTime, courseGrid, courseCard, courseThumb, courseTag, courseTitle, courseMeta, progressBar, progressFill, progressLabel, table, th, td } from '../components/styles';
 
-export default function StudentDashboardSection({ user, dashboard, notifications, search, onOpenCourse, onMarkRead }) {
+export default function StudentDashboardSection({ user, dashboard, notifications, search, onOpenCourse, onOpenDeadline, onViewGrade, onMarkRead }) {
   if (!dashboard) return null;
 
   const enrolledCount = dashboard.enrollments?.length || 0;
@@ -14,6 +14,21 @@ export default function StudentDashboardSection({ user, dashboard, notifications
   const gpa = gpaValue != null && !Number.isNaN(Number(gpaValue)) ? Number(gpaValue).toFixed(2) : '—';
   const atRisk = dashboard.profile?.is_at_risk;
   const deadlinesCount = dashboard.deadlines?.length || 0;
+
+  // Decide what label / click handler to use for each upcoming deadline row.
+  const deadlineActionFor = (d) => {
+    const isAssignment = d.submission_type && d.submission_type !== 'online_quiz';
+    const hasAttempt = !!d.latest_attempt_id;
+    if (hasAttempt && (d.latest_attempt_status === 'submitted' || d.latest_attempt_status === 'graded')) {
+      return { label: 'View Result', tone: 'good', onClick: () => onViewGrade(d.latest_attempt_id) };
+    }
+    if (hasAttempt && d.latest_attempt_status === 'in_progress') {
+      return { label: isAssignment ? 'Resume' : 'Resume', tone: 'warn',
+               onClick: () => onOpenDeadline(d) };
+    }
+    return { label: isAssignment ? 'Open Assignment' : 'Open Quiz', tone: 'due',
+             onClick: () => onOpenDeadline(d) };
+  };
 
   return (
     <div className="std-card">
@@ -82,18 +97,52 @@ export default function StudentDashboardSection({ user, dashboard, notifications
             {dashboard.deadlines.length === 0 ? (
               <div style={emptyState}>No upcoming deadlines.</div>
             ) : (
-              dashboard.deadlines.map((d, i) => (
-                <div key={`${d.title}-${i}`} style={quizItem}>
-                  <div style={{ ...quizIcon, background: 'rgba(249,115,22,0.12)' }}>⏱</div>
-                  <div style={quizInfo}>
-                    <div style={quizName}>{d.title}</div>
-                    <div style={quizMeta}>{d.course_title}</div>
+              dashboard.deadlines.map((d, i) => {
+                const isAssignment = d.submission_type && d.submission_type !== 'online_quiz';
+                const action = deadlineActionFor(d);
+                const dueLabel = d.due_date
+                  ? `Due ${new Date(d.due_date).toLocaleDateString()}`
+                  : 'No deadline';
+                return (
+                  <div
+                    key={`${d.quiz_id}-${i}`}
+                    style={{ ...quizItem, cursor: 'pointer' }}
+                    onClick={action.onClick}
+                  >
+                    <div style={{ ...quizIcon, background: isAssignment ? 'rgba(251,176,64,0.12)' : 'rgba(249,115,22,0.12)' }}>
+                      {isAssignment ? '✎' : '⏱'}
+                    </div>
+                    <div style={quizInfo}>
+                      <div style={quizName}>{d.title}</div>
+                      <div style={quizMeta}>
+                        {d.course_title}
+                        {isAssignment ? ' · Assignment' : ' · Quiz'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ ...quizStatus, ...statusPill(action.tone) }}>
+                        {dueLabel}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); action.onClick(); }}
+                        style={{
+                          background: token.brass,
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: token.radiusSm,
+                          padding: '5px 12px',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {action.label}
+                      </button>
+                    </div>
                   </div>
-                  <span style={{ ...quizStatus, ...statusPill('due') }}>
-                    Due {new Date(d.due_date).toLocaleDateString()}
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

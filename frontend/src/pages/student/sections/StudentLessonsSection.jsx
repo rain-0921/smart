@@ -330,16 +330,18 @@ export function QuizListPanel({ quizzes, onStartQuiz, onOpenAssignment, onViewGr
       return q.type === 'assignment' ? 'Attempt' : 'Start';
     }
     if (q.status === 'submitted' || q.status === 'completed' || q.status === 'graded') {
-      return 'View Result';
+      // Only show "View Result" when we actually have an attempt to look at
+      return q.latest_attempt_id ? 'View Result' : null;
     }
-    return null; // closed / graded — no button
+    return null; // closed — no button
   };
 
   const handleClick = (q) => {
     const action = getAction(q);
     if (!action) return;
     if (action === 'View Result') {
-      onViewGrade(q.quiz_id);
+      // Pass the attempt id, NOT the quiz id — the backend expects quiz_attempt_id
+      onViewGrade(q.latest_attempt_id);
     } else if (q.type === 'assignment') {
       onOpenAssignment(q.quiz_id);
     } else {
@@ -506,7 +508,7 @@ const StudentLessonsSection = function StudentLessonsSection({
         formatTime={formatTime}
         quizAnswers={quizAnswers}
         onChangeAnswer={onChangeAnswer}
-        onSubmit={() => onSubmitQuiz(activeQuiz.quiz.quiz_id, quizAnswers)}
+        onSubmit={() => onSubmitQuiz()}
       />
     );
   }
@@ -522,15 +524,15 @@ const StudentLessonsSection = function StudentLessonsSection({
     return (
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontFamily: fontDisplay }}>{assignmentData.title || 'Assignment'}</h3>
+          <h3 style={{ margin: 0, fontFamily: fontDisplay }}>{assignmentData.quiz.title || 'Assignment'}</h3>
           <button style={btnGhost} onClick={onCloseAssignment}>✕</button>
         </div>
         <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 16 }}>
-          {assignmentData.description || 'Complete this assignment and submit.'}
+          {assignmentData.quiz.description || 'Complete this assignment and submit.'}
         </p>
-        {assignmentData.due_date && (
+        {assignmentData.quiz.due_date && (
           <p style={{ fontSize: 12, color: theme.accent4, marginBottom: 12 }}>
-            Due: {new Date(assignmentData.due_date).toLocaleDateString()}
+            Due: {new Date(assignmentData.quiz.due_date).toLocaleDateString()}
           </p>
         )}
         <input
@@ -546,7 +548,7 @@ const StudentLessonsSection = function StudentLessonsSection({
           onChange={e => onChangeAssignmentNote(e.target.value)}
         />
         <div style={{ display: 'flex', gap: 10 }}>
-          <button style={btnPrimary} onClick={() => onSubmitAssignment(assignmentData.quiz_id)} disabled={assignmentUploading}>
+          <button style={btnPrimary} onClick={onSubmitAssignment} disabled={assignmentUploading}>
             {assignmentUploading ? 'Submitting...' : 'Submit Assignment'}
           </button>
           <button style={btnGhost} onClick={onCloseAssignment}>Cancel</button>

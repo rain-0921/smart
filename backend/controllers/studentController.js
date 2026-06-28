@@ -2,6 +2,9 @@ const db = require('../config/db');
 const path = require('path');
 const fs = require('fs');
 
+// Expands an array into a comma-separated list of '?' placeholders for IN() clauses.
+const inPlaceholders = (arr) => arr.map(() => '?').join(',');
+
 // ─── DASHBOARD OVERVIEW ──────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
@@ -28,15 +31,40 @@ exports.getDashboard = async (req, res) => {
       [userId]
     );
 
-    // Upcoming deadlines — only show quizzes the student has NOT yet submitted
+    // Upcoming deadlines — quizzes/assignments not yet closed for this student.
+    // Shows everything still actionable: untouched quizzes, in-progress attempts,
+    // and submitted-but-awaiting-grading assignments so the student can still
+    // see "View Result" once the instructor finishes grading.
     const [deadlines] = await db.execute(
-      `SELECT q.title, q.due_date, c.title AS course_title
+      `SELECT q.quiz_id, q.course_id, q.title, q.due_date,
+              q.submission_type, q.time_limit_minutes, q.max_attempts,
+              att.quiz_attempt_id     AS latest_attempt_id,
+              att.status             AS latest_attempt_status,
+              att.score              AS latest_score,
+              att.created_at         AS latest_attempt_at,
+              c.title                AS course_title
        FROM quiz q
        JOIN course c ON q.course_id = c.course_id
        JOIN enrollment e ON e.course_id = q.course_id
-       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.user_id = ?
-       WHERE e.user_id = ? AND q.due_date > NOW() AND qa.quiz_attempt_id IS NULL
-       ORDER BY q.due_date ASC LIMIT 5`,
+       LEFT JOIN (
+         SELECT qa.quiz_id, qa.user_id, qa.quiz_attempt_id, qa.status, qa.score, qa.created_at
+         FROM quiz_attempt qa
+         WHERE qa.quiz_attempt_id = (
+           SELECT qa2.quiz_attempt_id FROM quiz_attempt qa2
+           WHERE qa2.quiz_id = qa.quiz_id AND qa2.user_id = qa.user_id
+           ORDER BY qa2.quiz_attempt_id DESC LIMIT 1
+         )
+       ) att ON att.quiz_id = q.quiz_id AND att.user_id = ?
+       WHERE e.user_id = ?
+         AND e.status = 'active'
+         AND q.status = 'published'
+         AND (q.due_date IS NULL OR q.due_date > NOW())
+         AND (
+           att.quiz_attempt_id IS NULL                -- never attempted
+           OR att.status IN ('in_progress','submitted') -- still actionable
+         )
+       ORDER BY (q.due_date IS NULL) ASC, q.due_date ASC
+       LIMIT 5`,
       [userId, userId]
     );
 
@@ -127,6 +155,7 @@ exports.getCourseCatalogue = async (req, res) => {
     const [courses] = await db.execute(
       `SELECT c.course_id, c.title, c.description, c.created_at,
               u.username AS instructor_name,
+              CONCAT('CRS-', LPAD(c.course_id, 3, '0')) AS course_code,
               (SELECT COUNT(*) FROM enrollment e2
                WHERE e2.course_id = c.course_id AND e2.user_id = ?) AS is_enrolled
        FROM course c
@@ -293,25 +322,52 @@ exports.getCourseQuizzes = async (req, res) => {
               q.time_limit_minutes, q.max_attempts, q.submission_type,
               COUNT(qa.quiz_attempt_id) AS attempts_taken,
               MAX(CASE WHEN qa.status='graded' THEN 1 ELSE 0 END) AS has_grade,
-              MAX(qa.status) AS latest_status
+              (SELECT qa2.status     FROM quiz_attempt qa2
+               WHERE qa2.quiz_id = q.quiz_id AND qa2.user_id = ?
+               ORDER BY qa2.quiz_attempt_id DESC LIMIT 1) AS latest_status,
+              (SELECT qa2.quiz_attempt_id FROM quiz_attempt qa2
+               WHERE qa2.quiz_id = q.quiz_id AND qa2.user_id = ?
+               ORDER BY qa2.quiz_attempt_id DESC LIMIT 1) AS latest_attempt_id,
+              (SELECT qa2.score FROM quiz_attempt qa2
+               WHERE qa2.quiz_id = q.quiz_id AND qa2.user_id = ?
+               ORDER BY qa2.quiz_attempt_id DESC LIMIT 1) AS latest_score,
+              (SELECT qa2.created_at FROM quiz_attempt qa2
+               WHERE qa2.quiz_id = q.quiz_id AND qa2.user_id = ?
+               ORDER BY qa2.quiz_attempt_id DESC LIMIT 1) AS latest_attempt_at
        FROM quiz q
        LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.user_id = ?
        WHERE q.course_id = ? AND q.status = 'published'
        GROUP BY q.quiz_id`,
-      [userId, courseId]
+      [userId, userId, userId, userId, userId, courseId]
     );
     const now = new Date();
     const result = quizzes.map(q => {
       const isAssignment = q.submission_type !== 'online_quiz';
-      const attemptsFull = q.attempts_taken >= q.max_attempts;
+      const attemptsTaken = Number(q.attempts_taken) || 0;
+      const maxAttempts = Number(q.max_attempts) || 1;
+      const attemptsFull = attemptsTaken >= maxAttempts;
       const pastDue = q.due_date && new Date(q.due_date) < now;
+      const hasAttempt = attemptsTaken > 0;
+      const isGraded = Number(q.has_grade) === 1;
+
       let status;
-      if (pastDue) {
-        status = isAssignment ? (q.attempts_taken > 0 ? 'submitted' : 'closed') : (q.has_grade ? 'graded' : 'closed');
+      if (!hasAttempt && pastDue) {
+        // Past the deadline and the student never opened it — closed permanently
+        status = 'closed';
+      } else if (isGraded) {
+        // Instructor (or auto-grader) has produced a final score for this attempt
+        status = 'graded';
+      } else if (pastDue && hasAttempt) {
+        // Deadline passed but there's a pending review — keep it visible
+        status = isAssignment ? 'submitted' : 'completed';
       } else if (attemptsFull) {
-        status = isAssignment ? 'submitted' : (q.has_grade ? 'graded' : 'completed');
+        // Used all allowed attempts but not yet graded
+        status = isAssignment ? 'submitted' : 'completed';
       } else {
-        status = isAssignment ? (q.attempts_taken > 0 ? 'submitted' : 'available') : (q.has_grade ? 'graded' : 'available');
+        // Still open: not attempted, or in-progress for an assignment
+        status = isAssignment
+          ? (hasAttempt ? 'submitted' : 'available')
+          : 'available';
       }
       return { ...q, type: isAssignment ? 'assignment' : 'quiz', status };
     });
@@ -463,7 +519,7 @@ exports.submitQuiz = async (req, res) => {
        WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
       [userId]
     );
-    const newGpa = avgScore ? Math.round((avgScore / 100) * 4 * 100) / 100 : 0;
+    const newGpa = avgScore ? parseFloat(((avgScore / 100) * 4).toFixed(2)) : 0;
     await db.execute(
       `UPDATE student_profile SET gpa=? WHERE user_id=?`,
       [newGpa, userId]
@@ -480,7 +536,7 @@ exports.submitQuiz = async (req, res) => {
         [userId]
       );
       const nowAtRisk = newGpa < 2.0 ? 1 : 0;
-      if (nowAtRisk === 1 && wasAtRisk.wasAtRisk !== 1) {
+        if (nowAtRisk === 1 && wasAtRisk !== 1) {
         await db.execute(
           `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
@@ -616,6 +672,21 @@ exports.submitAssignment = async (req, res) => {
       return res.status(400).json({ message: 'The deadline has passed. Submission is closed.' });
     }
 
+    // Enforce max_attempts on first submission
+    const [attemptCountRows] = await db.execute(
+      `SELECT COUNT(*) AS cnt FROM quiz_attempt WHERE quiz_id=? AND user_id=?`,
+      [quizId, userId]
+    );
+    const attemptCount = attemptCountRows[0].cnt;
+    const [maxRows] = await db.execute(
+      `SELECT max_attempts FROM quiz WHERE quiz_id=?`, [quizId]
+    );
+    const maxAttempts = maxRows[0].max_attempts || 1;
+    if (attemptCount >= maxAttempts) {
+      cleanupUpload();
+      return res.status(400).json({ message: `Maximum of ${maxAttempts} attempt(s) reached for this assignment.` });
+    }
+
     // Student must be enrolled in the course this assignment belongs to
     const [enrolled] = await db.execute(
       `SELECT e.enrollment_id
@@ -640,10 +711,12 @@ exports.submitAssignment = async (req, res) => {
       if (existingQ.length > 0) {
         questionId = existingQ[0].question_id;
       } else {
-        // Create a placeholder question; its text will serve as the instructions
+        // Create a placeholder question so the answer record has a valid FK.
+        // Its text doubles as the instructions shown to the student; it carries
+        // no points so it does not affect grading.
         const [insResult] = await db.execute(
           `INSERT INTO question (quiz_id, question_type, question_text, correct_answer, points, sort_order)
-           VALUES (?, 'short_answer', 'File submission — no text answer required.', '*', 0, 1)`,
+           VALUES (?, 'short_answer', '[File submission — see assignment instructions]', 'N/A', 0, 1)`,
           [quizId]
         );
         questionId = insResult.insertId;
@@ -671,6 +744,11 @@ exports.submitAssignment = async (req, res) => {
 
     let attemptId;
     if (existing.length > 0) {
+      // Reject resubmit if deadline has passed
+      if (quiz.due_date && new Date(quiz.due_date) < new Date()) {
+        cleanupUpload();
+        return res.status(400).json({ message: 'The deadline has passed. Resubmission is not allowed.' });
+      }
       attemptId = existing[0].quiz_attempt_id;
 
       // Remove the previously uploaded file before overwriting
@@ -820,6 +898,7 @@ exports.getProgress = async (req, res) => {
     const [courses] = await db.execute(
       `SELECT e.enrollment_id, e.course_id, e.completion_percent, e.status AS enrollment_status,
               c.title AS course_title,
+              CONCAT('CRS-', LPAD(c.course_id, 3, '0')) AS course_code,
               u.username AS instructor_name
        FROM enrollment e
        JOIN course c ON e.course_id = c.course_id
@@ -829,27 +908,34 @@ exports.getProgress = async (req, res) => {
       [userId]
     );
 
-    // ── 3. Module progress per course ─────────────────────
-    for (const course of courses) {
-      const [modules] = await db.execute(
-        `SELECT m.module_id, m.title,
+    // ── 3. Module progress per course (batch fetch — no N+1) ───
+    if (courses.length > 0) {
+      const courseIds = courses.map(c => c.course_id);
+      const [allModules] = await db.execute(
+        `SELECT m.module_id, m.course_id, m.title,
                 COALESCE(mp.status, 'not_started') AS status,
                 COALESCE(mp.completion_percentage, 0) AS completion_percentage,
                 mp.completed_at
          FROM module m
          LEFT JOIN module_progress mp ON mp.module_id = m.module_id AND mp.user_id = ?
-         WHERE m.course_id = ?
+         WHERE m.course_id IN (${inPlaceholders(courseIds)}) AND m.status = 'published'
          ORDER BY m.sort_order`,
-        [userId, course.course_id]
+        [userId, ...courseIds]
       );
-      course.modules = modules;
-
-      // Recompute course-level completion from modules
-      const total = modules.length;
-      const done  = modules.filter(m => m.status === 'completed').length;
-      course.module_completion_percent = total > 0
-        ? parseFloat(((done / total) * 100).toFixed(2))
-        : 0;
+      const modulesByCourse = {};
+      for (const m of allModules) {
+        if (!modulesByCourse[m.course_id]) modulesByCourse[m.course_id] = [];
+        modulesByCourse[m.course_id].push(m);
+      }
+      for (const course of courses) {
+        const modules = modulesByCourse[course.course_id] || [];
+        course.modules = modules;
+        const total = modules.length;
+        const done  = modules.filter(m => m.status === 'completed').length;
+        course.module_completion_percent = total > 0
+          ? parseFloat(((done / total) * 100).toFixed(2))
+          : 0;
+      }
     }
 
     // ── 4. Quiz performance summary ────────────────────────
@@ -873,43 +959,57 @@ exports.getProgress = async (req, res) => {
       };
     }
 
-    // ── 5. Recommended next steps ──────────────────────────
-    // Find the first incomplete module across all active courses
+    // ── 5. Recommended next steps (batch — no N+1) ───────────
+    const activeCourses = courses.filter(c => c.enrollment_status === 'active');
     const recommendations = [];
-    for (const course of courses) {
-      if (course.enrollment_status !== 'active') continue;
-      const nextModule = course.modules.find(m => m.status !== 'completed');
-      if (nextModule) {
-        recommendations.push({
-          course_id: course.course_id,
-          course_title: course.course_title,
-          next_module_id: nextModule.module_id,
-          next_module_title: nextModule.title,
-          message: `Continue "${nextModule.title}" in ${course.course_title}`
-        });
-      }
+    if (activeCourses.length > 0) {
+      const activeCourseIds = activeCourses.map(c => c.course_id);
 
-      // Flag upcoming quizzes not yet attempted
-      const [upcoming] = await db.execute(
-        `SELECT q.quiz_id, q.title, q.due_date
+      // Batch-fetch all upcoming unattempted quizzes across active courses
+      const [allUpcoming] = await db.execute(
+        `SELECT q.quiz_id, q.course_id, q.title, q.due_date
          FROM quiz q
-         WHERE q.course_id = ? AND q.status = 'published'
+         WHERE q.course_id IN (${inPlaceholders(activeCourseIds)})
+           AND q.status = 'published'
            AND (q.due_date IS NULL OR q.due_date > NOW())
            AND q.quiz_id NOT IN (
-               SELECT qa.quiz_id FROM quiz_attempt qa WHERE qa.user_id = ?
+               SELECT qa.quiz_id FROM quiz_attempt qa
+               WHERE qa.user_id = ? AND qa.status IN ('graded','submitted')
            )
-         ORDER BY q.due_date ASC LIMIT 3`,
-        [course.course_id, userId]
+         ORDER BY q.course_id, q.due_date ASC`,
+        [...activeCourseIds, userId]
       );
-      for (const q of upcoming) {
-        recommendations.push({
-          course_id: course.course_id,
-          course_title: course.course_title,
-          quiz_id: q.quiz_id,
-          quiz_title: q.title,
-          due_date: q.due_date,
-          message: `Attempt quiz "${q.title}" in ${course.course_title}`
-        });
+      const upcomingByCourse = {};
+      for (const q of allUpcoming) {
+        if (!upcomingByCourse[q.course_id]) upcomingByCourse[q.course_id] = [];
+        if (upcomingByCourse[q.course_id].length < 3) {
+          upcomingByCourse[q.course_id].push(q);
+        }
+      }
+
+      for (const course of activeCourses) {
+        const nextModule = course.modules.find(m => m.status !== 'completed');
+        if (nextModule) {
+          recommendations.push({
+            type: 'module',
+            course_id: course.course_id,
+            course_title: course.course_title,
+            next_module_id: nextModule.module_id,
+            next_module_title: nextModule.title,
+            message: `Continue "${nextModule.title}" in ${course.course_title}`
+          });
+        }
+        for (const q of (upcomingByCourse[course.course_id] || [])) {
+          recommendations.push({
+            type: 'quiz',
+            course_id: course.course_id,
+            course_title: course.course_title,
+            quiz_id: q.quiz_id,
+            quiz_title: q.title,
+            due_date: q.due_date,
+            message: `Attempt quiz "${q.title}" in ${course.course_title}`
+          });
+        }
       }
     }
 
