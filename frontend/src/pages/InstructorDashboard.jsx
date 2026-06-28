@@ -14,7 +14,8 @@ import {
   instrGetQuestions, instrAddQuestion, instrUpdateQuestion, instrDeleteQuestion,
   instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
   instrGetStudents, instrExportStudents, instrGetStudentDetail, instrGetPending, instrGradeSubmission,
-  instrGetAnalytics, instrGetNotifications, instrMarkRead
+  instrGetAnalytics, instrGetNotifications, instrMarkRead,
+  photoUrl
 } from '../services/api';
 
 /* ════════════════════════════════════════════════════════════
@@ -542,9 +543,12 @@ export default function InstructorDashboard() {
       fd.append('subjects_taught', profileForm.subjects_taught || '');
       fd.append('office_hours', profileForm.office_hours || '');
       if (photoFile) fd.append('photo', photoFile);
-      await instrUpdateProfile(fd);
+      const res = await instrUpdateProfile(fd);
+      const returnedPhotoUrl = res?.data?.photo_url;
+      setProfileForm(pf => ({ ...pf, photo_url: returnedPhotoUrl || pf.photo_url }));
       showAlert('Profile updated.');
       setShowProfileModal(false);
+      setPhotoFile(null);
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
 
@@ -839,7 +843,7 @@ export default function InstructorDashboard() {
                       : quizzes.map(q => (
                         <div key={q.quiz_id} style={{ padding: '12px 0', borderBottom: `1px solid ${token.line}` }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                            <div>
+                            <div style={{ flex: 1 }}>
                               <div style={{ fontWeight: 600, fontSize: 14, color: token.ink }}>{q.title}</div>
                               <div style={{ fontSize: 11, color: token.inkSoft, marginTop: 2, fontFamily: fontMono }}>
                                 {q.question_count} Q · {q.attempt_count} attempt{q.attempt_count !== 1 ? 's' : ''}
@@ -848,6 +852,11 @@ export default function InstructorDashboard() {
                             <div style={{ display: 'flex', gap: 4, flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
                               <StatusBadge status={q.status} />
                               <div style={{ display: 'flex', gap: 4 }}>
+                                <button className="ins-btn"
+                                  onClick={() => selectedQuiz?.quiz_id === q.quiz_id ? setSelectedQuiz(null) : openQuiz(q)}
+                                  style={{ background: selectedQuiz?.quiz_id === q.quiz_id ? token.brass : token.surface2, color: selectedQuiz?.quiz_id === q.quiz_id ? '#fff' : token.ink, border: `1px solid ${token.line}`, borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                                  {selectedQuiz?.quiz_id === q.quiz_id ? '▲' : '▼'}
+                                </button>
                                 <button className="ins-btn" onClick={() => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: q.due_date || '', time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', status: q.status || 'draft' }); setShowQuizModal(true); }}
                                   style={{ background: token.surface2, color: token.ink, border: `1px solid ${token.line}`, borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
                                   Edit
@@ -1520,7 +1529,7 @@ export default function InstructorDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
               <div style={{ width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${token.line}`, background: token.surface3, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 {profileForm.photo_url
-                  ? <img src={`http://localhost:5000${profileForm.photo_url}`} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
+                  ? <img src={photoUrl(profileForm.photo_url)} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
                   : <span style={{ fontSize: 24 }}>👨‍🏫</span>
                 }
               </div>

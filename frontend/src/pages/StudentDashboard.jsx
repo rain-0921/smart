@@ -6,7 +6,8 @@ import {
   studentGetQuizzes, studentStartQuiz, studentSubmitQuiz,
   studentGetAssignment, studentSubmitAssignment,
   studentGetGrades, studentGetGradeDetail, studentGetProgress,
-  studentGetNotifications, studentMarkRead, studentLogActivity
+  studentGetNotifications, studentMarkRead, studentLogActivity,
+  BASE_URL
 } from '../services/api';
 
 const token = {
@@ -167,11 +168,17 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.8 }) {
 function initials(name = '') {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '?';
 }
+const resolvePhoto = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 function Avatar({ name, photoUrl, size = 38 }) {
   const [broken, setBroken] = useState(false);
-  if (photoUrl && !broken) {
+  const src = resolvePhoto(photoUrl);
+  if (src && !broken) {
     return (
-      <img src={photoUrl} alt={name} onError={() => setBroken(true)}
+      <img src={src} alt={name} onError={() => setBroken(true)}
         style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${token.line}`, flexShrink: 0 }} />
     );
   }
@@ -630,7 +637,7 @@ export default function StudentDashboard() {
 
         <div style={{ padding: '0 12px' }}>
           <div onClick={openProfile} className="std-nav-item" style={{ ...navItem, display: 'flex', alignItems: 'center', gap: 10, color: '#B7BFCF' }}>
-            <Avatar name={user?.username} size={28} />
+            <Avatar name={user?.username} photoUrl={dashboard?.profile?.photo_url} size={28} />
             <div style={{ overflow: 'hidden' }}>
               <div style={{ fontSize: 13, color: '#fff', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {user?.username}
@@ -668,7 +675,7 @@ export default function StudentDashboard() {
               {unreadCount > 0 && <span style={notifDot} />}
             </button>
             <button style={{ ...iconBtn, border: 'none', background: 'none', cursor: 'pointer' }} onClick={openProfile} aria-label="Profile">
-              <Avatar name={user?.username} size={32} />
+              <Avatar name={user?.username} photoUrl={dashboard?.profile?.photo_url} size={32} />
             </button>
           </div>
         </header>
@@ -1704,7 +1711,7 @@ export default function StudentDashboard() {
               {/* Avatar + photo upload */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
                 {photoPreview || profile?.photo_url ? (
-                  <img src={photoPreview || profile?.photo_url} alt={profileForm.username}
+                  <img src={photoPreview || resolvePhoto(profile?.photo_url)} alt={profileForm.username}
                     style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${theme.border}` }}
                     onError={(e) => { e.target.style.display = 'none'; }} />
                 ) : (

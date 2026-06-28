@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API = axios.create({ baseURL: 'http://localhost:5000/api' });
+const BASE_URL = 'http://localhost:5000';
+const API = axios.create({ baseURL: `${BASE_URL}/api` });
+
+export { BASE_URL };
+
+/** Prepends BASE_URL if the path is a relative upload path (starts with /uploads/). */
+export const photoUrl = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 
 API.interceptors.request.use((req) => {
   const token = localStorage.getItem('token');

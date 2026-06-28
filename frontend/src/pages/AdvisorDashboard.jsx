@@ -4,7 +4,8 @@ import {
   advisorGetDashboard, advisorGetProfile, advisorUpdateProfile,
   advisorGetStudents, advisorGetStudent, advisorGetGrades,
   advisorGetProgress, advisorGetReport, advisorExportReport,
-  advisorGetNotifications, advisorMarkRead
+  advisorGetNotifications, advisorMarkRead,
+  BASE_URL
 } from '../services/api';
 
 /* ════════════════════════════════════════════════════════════
@@ -119,21 +120,27 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.8 }) {
 function initials(name = '') {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('') || '?';
 }
+const resolvePhoto = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 function Avatar({ name, photoUrl, size = 38 }) {
   const [broken, setBroken] = useState(false);
-  if (photoUrl && !broken) {
+  const src = resolvePhoto(photoUrl);
+  if (src && !broken) {
     return (
-      <img src={photoUrl} alt={name} onError={() => setBroken(true)}
+      <img src={src} alt={name} onError={() => setBroken(true)}
         style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${token.line}`, flexShrink: 0 }} />
     );
   }
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', flexShrink: 0,
-      background: token.brassSoft, color: token.brassDeep,
+      background: `${token.indigo}18`, color: token.indigo,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: fontDisplay, fontWeight: 600, fontSize: size * 0.38,
-      border: `1px solid ${token.brass}33`,
+      border: `1px solid ${token.indigo}40`,
     }}>{initials(name)}</div>
   );
 }
