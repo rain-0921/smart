@@ -206,6 +206,17 @@ exports.completeLesson = async (req, res) => {
   const userId = req.user.user_id;
   const { moduleId } = req.params;
   try {
+    // SPEC UC2.1.4 — student must be actively enrolled in the module's course.
+    const [enrolled] = await db.execute(
+      `SELECT e.enrollment_id FROM enrollment e
+       JOIN module m ON m.course_id = e.course_id
+       WHERE m.module_id = ? AND e.user_id = ? AND e.status = 'active'`,
+      [moduleId, userId]
+    );
+    if (enrolled.length === 0) {
+      return res.status(403).json({ message: 'You are not enrolled in this course' });
+    }
+
     const [existing] = await db.execute(
       'SELECT * FROM module_progress WHERE user_id=? AND module_id=?',
       [userId, moduleId]
@@ -263,6 +274,13 @@ exports.startQuiz = async (req, res) => {
       'SELECT * FROM quiz WHERE quiz_id=? AND status="published"', [quizId]
     );
     if (quiz.length === 0) return res.status(404).json({ message: 'Quiz not found' });
+
+    // SPEC UC2.4.5 — "students can attempt it based on configured settings".
+    // The configured due_date is one of those settings, so once it has passed
+    // the quiz is closed and no new attempts may be started.
+    if (quiz[0].due_date && new Date(quiz[0].due_date) < new Date()) {
+      return res.status(400).json({ message: 'The deadline for this quiz has passed.' });
+    }
 
     const [attempts] = await db.execute(
       'SELECT COUNT(*) AS cnt FROM quiz_attempt WHERE quiz_id=? AND user_id=?',

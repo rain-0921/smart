@@ -13,7 +13,7 @@ import {
   instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrDeleteQuiz,
   instrGetQuestions, instrAddQuestion, instrUpdateQuestion, instrDeleteQuestion,
   instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
-  instrGetStudents, instrExportStudents, instrGetStudentDetail, instrGetPending, instrGradeSubmission,
+  instrGetStudents, instrExportStudents, instrExportStudentsPdf, instrGetStudentDetail, instrGetPending, instrGradeSubmission,
   instrGetAnalytics, instrGetNotifications, instrMarkRead,
   photoUrl
 } from '../services/api';
@@ -465,6 +465,24 @@ export default function InstructorDashboard() {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       alert('Failed to export: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
+  // SPEC UC2.4.8 — instructors can export the student-progress report as PDF or CSV.
+  const exportStudentsPdf = async () => {
+    try {
+      const res = await instrExportStudentsPdf(selectedCourse.course_id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `course_${selectedCourse.course_id}_students_${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to export PDF: ' + (err.response?.data?.message || err.message));
     }
   };
 
@@ -947,20 +965,37 @@ export default function InstructorDashboard() {
                   <div className="ins-card" style={{ gridColumn: '1 / -1', background: token.surface, border: `1px solid ${token.line}`, borderRadius: token.radius, padding: 22 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
                       <h4 style={{ margin: 0, fontFamily: fontDisplay, fontSize: 16, color: token.ink }}>Enrolled Students</h4>
-                      <button onClick={exportStudentsCsv} disabled={students.length === 0}
-                        style={{
-                          padding: '7px 12px', fontSize: 12, fontWeight: 600,
-                          cursor: students.length === 0 ? 'not-allowed' : 'pointer',
-                          border: `1px solid ${token.line}`, borderRadius: 6,
-                          background: students.length === 0 ? token.surface2 : token.ink,
-                          color: students.length === 0 ? token.inkFaint : '#fff',
-                          display: 'inline-flex', alignItems: 'center', gap: 6
-                        }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" />
-                        </svg>
-                        Export CSV
-                      </button>
+                      <div style={{ display: 'inline-flex', gap: 8 }}>
+                        <button onClick={exportStudentsCsv} disabled={students.length === 0}
+                          style={{
+                            padding: '7px 12px', fontSize: 12, fontWeight: 600,
+                            cursor: students.length === 0 ? 'not-allowed' : 'pointer',
+                            border: `1px solid ${token.line}`, borderRadius: 6,
+                            background: students.length === 0 ? token.surface2 : token.ink,
+                            color: students.length === 0 ? token.inkFaint : '#fff',
+                            display: 'inline-flex', alignItems: 'center', gap: 6
+                          }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" />
+                          </svg>
+                          Export CSV
+                        </button>
+                        <button onClick={exportStudentsPdf} disabled={students.length === 0}
+                          title="Download a PDF copy of the student progress report"
+                          style={{
+                            padding: '7px 12px', fontSize: 12, fontWeight: 600,
+                            cursor: students.length === 0 ? 'not-allowed' : 'pointer',
+                            border: `1px solid ${token.line}`, borderRadius: 6,
+                            background: students.length === 0 ? token.surface2 : token.brass,
+                            color: students.length === 0 ? token.inkFaint : '#fff',
+                            display: 'inline-flex', alignItems: 'center', gap: 6
+                          }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" />
+                          </svg>
+                          Export PDF
+                        </button>
+                      </div>
                     </div>
                     {students.length === 0
                       ? <p style={{ color: token.inkFaint, fontSize: 13 }}>No enrolled students yet.</p>

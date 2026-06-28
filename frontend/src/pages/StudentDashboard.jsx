@@ -1304,18 +1304,37 @@ export default function StudentDashboard() {
                                       {q.submission_type !== 'online_quiz' ? 'File Upload' : `Attempts: ${q.attempts_taken}/${q.max_attempts}`}
                                     </div>
                                     {q.due_date &&
-                                      <div style={{ ...quizMeta, color: theme.accent4 }}>
-                                        Due {new Date(q.due_date).toLocaleDateString()}
+                                      <div style={{
+                                        ...quizMeta,
+                                        color: new Date(q.due_date) < new Date() ? theme.accent5 : theme.accent4
+                                      }}>
+                                        {new Date(q.due_date) < new Date() ? 'Closed ' : 'Due '}{new Date(q.due_date).toLocaleDateString()}
                                       </div>
                                     }
                                   </div>
                                   {q.submission_type !== 'online_quiz'
-                                    ? <button style={{ ...btnSmall, background: theme.accent2 }} onClick={() => handleOpenAssignment(q.quiz_id)}>
-                                        {q.attempts_taken > 0 ? 'View / Resubmit' : 'Submit'}
-                                      </button>
-                                    : q.attempts_taken < q.max_attempts
-                                      ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
-                                      : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>
+                                    ? (() => {
+                                        const closed = q.due_date && new Date(q.due_date) < new Date();
+                                        return (
+                                          <button
+                                            style={{ ...btnSmall, background: theme.accent2 }}
+                                            disabled={closed}
+                                            title={closed ? 'The deadline for this assignment has passed' : undefined}
+                                            onClick={() => handleOpenAssignment(q.quiz_id)}
+                                          >
+                                            {closed ? 'Closed' : (q.attempts_taken > 0 ? 'View / Resubmit' : 'Submit')}
+                                          </button>
+                                        );
+                                      })()
+                                    : (() => {
+                                        const closed = q.due_date && new Date(q.due_date) < new Date();
+                                        if (closed) {
+                                          return <span style={{ ...quizStatus, ...statusPill('done') }}>Closed</span>;
+                                        }
+                                        return q.attempts_taken < q.max_attempts
+                                          ? <button style={btnSmall} onClick={() => handleStartQuiz(q.quiz_id)}>Start</button>
+                                          : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>;
+                                      })()
                                   }
                                 </div>
                               ))

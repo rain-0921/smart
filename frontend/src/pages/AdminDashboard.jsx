@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   adminGetUsers, adminAddUser, adminEditUser, adminDeactivateUser,
@@ -278,7 +278,7 @@ export default function AdminDashboard() {
       const res = await adminGetLogUsers();
       setLogUsers(res.data?.data ?? []);
     });
-  }, [tab]);
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── USER CRUD ──
   const openAddUser = () => {
