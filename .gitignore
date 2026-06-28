@@ -1,0 +1,8 @@
+node_modules/
+.env
+uploads/
+backend/uploads/
+frontend/build/
+frontend/node_modules/
+*.log
+.DS_Store
