@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
-  adminGetUsers, adminAddUser, adminEditUser, adminDeactivateUser,
+  adminGetUsers, adminAddUser, adminEditUser, adminDeactivateUser, adminGetDepartments,
   adminGetCourses, adminAddCourse, adminEditCourse, adminArchiveCourse,
   adminGetEnrollments, adminAddEnrollment, adminEditEnrollment, adminDropEnrollment,
   adminGetReports, adminExportReports, adminGetReportTypes, adminGetDashboard, adminGetLogs, adminGetLogFilters, adminGetLogUsers,
@@ -50,6 +50,7 @@ export default function AdminDashboard() {
   const [notifications, setNotifications] = useState([]);
   const [reports, setReports]     = useState(null);
   const [reportTypes, setReportTypes] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState('summary');
   const [reportStart, setReportStart] = useState('');
@@ -84,7 +85,7 @@ export default function AdminDashboard() {
   const [logFilterEnd, setLogFilterEnd]           = useState('');
   const [logFilterRoles, setLogFilterRoles]       = useState([]);
   const [logActivityCategories, setLogActivityCategories] = useState([]);
-  const [filterLoading, setFilterLoading]         = useState(false);
+  const [filterLoading, setFilterLoading]         = useState(true); // start true so loading shows on first visit
 
   const withLoading = useCallback(async (key, fn) => {
     setLoading(l => ({ ...l, [key]: true }));
@@ -96,7 +97,12 @@ export default function AdminDashboard() {
   // fetch on tab change
   useEffect(() => {
     if (tab === 'dashboard')   withLoading('dashboard',  async () => setDashboard((await adminGetDashboard()).data));
-    if (tab === 'users')       withLoading('users',      async () => setUsers((await adminGetUsers()).data));
+    if (tab === 'users')       withLoading('users',      async () => {
+      const r = await adminGetUsers();
+      setUsers(r.data);
+      const d = await adminGetDepartments();
+      setDepartments(d.data || []);
+    });
     if (tab === 'courses')     withLoading('courses',    async () => setCourses((await adminGetCourses()).data));
     if (tab === 'enrollments') withLoading('enrollments', async () => {
       setEnrollments((await adminGetEnrollments()).data);
@@ -112,12 +118,16 @@ export default function AdminDashboard() {
       const types = (await adminGetReportTypes()).data;
       setReportTypes(types);
     });
-    if (tab === 'logs')        withLoading('logs',        async () => {
-      setLogViewMode('user-list');
-      setLogs([]);
-      const res = await adminGetLogUsers();
-      setLogUsers(res.data?.data ?? []);
-    });
+    if (tab === 'logs') {
+      withLoading('logs', async () => {
+        setFilterLoading(true);
+        setLogViewMode('user-list');
+        setLogs([]);
+        const res = await adminGetLogUsers();
+        setLogUsers(res.data?.data ?? []);
+        setFilterLoading(false);
+      });
+    }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -440,6 +450,7 @@ export default function AdminDashboard() {
           editingUser={editingUser}
           userForm={userForm}
           instructors={instructors}
+          departments={departments}
           onChange={setUserForm}
           onClose={() => setShowUserModal(false)}
           onSubmit={saveUser}

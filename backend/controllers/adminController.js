@@ -1,6 +1,20 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 
+// ─── DEPARTMENTS ──────────────────────────────────────────
+
+// Returns all distinct non-null department values already in use.
+exports.getDepartments = async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      "SELECT DISTINCT department FROM user WHERE department IS NOT NULL AND department != '' ORDER BY department"
+    );
+    res.json(rows.map(r => r.department));
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── USERS ───────────────────────────────────────────────
 
 // Get all users
@@ -23,6 +37,26 @@ exports.addUser = async (req, res) => {
   if (!username || !email || !password || !role) {
     return res.status(400).json({ message: 'Please fill in all required fields' });
   }
+  // Students must use a smis.edu email
+  if (role === 'student' && !/^[^@]+@smis\.edu$/.test(email)) {
+    return res.status(400).json({ message: 'Student email must end with @smis.edu' });
+  }
+  // Phone may only contain digits, spaces, hyphens and leading plus
+  if (phone_number && phone_number.trim() !== '' && !/^\+?[\d\s\-]+$/.test(phone_number)) {
+    return res.status(400).json({ message: 'Phone number can only contain digits, spaces, hyphens and leading +' });
+  }
+  // Department must be from the allowed list when creating a student
+  if (role === 'student' && department && department.trim() !== '') {
+    try {
+      const [existing] = await db.execute(
+        "SELECT DISTINCT department FROM user WHERE department IS NOT NULL AND department != '' ORDER BY department"
+      );
+      const allowed = existing.map(r => r.department);
+      if (!allowed.includes(department)) {
+        return res.status(400).json({ message: 'Please select a valid department from the list' });
+      }
+    } catch (_) {}
+  }
   try {
     const [existing] = await db.execute(
       'SELECT user_id FROM user WHERE email = ?', [email]
@@ -31,16 +65,16 @@ exports.addUser = async (req, res) => {
       return res.status(400).json({ message: 'Email already exists' });
     }
     const password_hash = await bcrypt.hash(password, 10);
-    const [result] = await db.execute(
+    await db.execute(
       `INSERT INTO user (username, email, password_hash, role, department, phone_number)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [username, email, password_hash, role, department || null, phone_number || null]
     );
-    const newUserId = result.insertId;
+    const [[{ insertId }]] = await db.execute('SELECT LAST_INSERT_ID()');
     if (role === 'student') {
-      await db.execute('INSERT INTO student_profile (user_id) VALUES (?)', [newUserId]);
+      await db.execute('INSERT INTO student_profile (user_id) VALUES (?)', [insertId]);
     } else if (role === 'instructor') {
-      await db.execute('INSERT INTO instructor_profile (user_id) VALUES (?)', [newUserId]);
+      await db.execute('INSERT INTO instructor_profile (user_id) VALUES (?)', [insertId]);
     }
     res.status(201).json({ message: 'User created successfully' });
   } catch (error) {
@@ -54,6 +88,9 @@ exports.editUser = async (req, res) => {
   const { username, email, role, department, phone_number, status } = req.body;
   if (!username || !email || !role || !status) {
     return res.status(400).json({ message: 'Please fill in all required fields' });
+  }
+  if (phone_number && phone_number.trim() !== '' && !/^\+?[\d\s\-]+$/.test(phone_number)) {
+    return res.status(400).json({ message: 'Phone number can only contain digits, spaces, hyphens and leading +' });
   }
   try {
     await db.execute(
@@ -170,7 +207,7 @@ exports.addEnrollment = async (req, res) => {
   }
   try {
     const [existing] = await db.execute(
-      'SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=?',
+      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status IN ('active','completed')",
       [user_id, course_id]
     );
     if (existing.length > 0) {
@@ -186,24 +223,17 @@ exports.addEnrollment = async (req, res) => {
   }
 };
 
-// Edit enrollment (update status or course_id by enrollment_id)
+// Edit enrollment — only status is mutable from the admin UI (course cannot be changed).
 exports.editEnrollment = async (req, res) => {
   const { id } = req.params;
-  const { status, course_id } = req.body;
-  if (!status && !course_id) {
-    return res.status(400).json({ message: 'At least one of status or course_id is required' });
+  const { status } = req.body;
+  if (!status) {
+    return res.status(400).json({ message: 'Status is required' });
   }
   try {
-    // Build dynamic SET clause so callers can update either or both fields
-    const fields = [];
-    const values = [];
-    if (status) { fields.push('status=?');    values.push(status); }
-    if (course_id) { fields.push('course_id=?'); values.push(course_id); }
-    values.push(id);
-
     await db.execute(
-      `UPDATE enrollment SET ${fields.join(', ')} WHERE enrollment_id=?`,
-      values
+      'UPDATE enrollment SET status=? WHERE enrollment_id=?',
+      [status, id]
     );
     res.json({ message: 'Enrollment updated successfully' });
   } catch (error) {
@@ -416,7 +446,9 @@ function buildDateRange(column, startDate, endDate) {
   const params = [];
   const isValid = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
   if (isValid(startDate)) { clauses.push(`${column} >= ?`); params.push(`${startDate} 00:00:00`); }
-  if (isValid(endDate))   { clauses.push(`${column} <= ?`); params.push(`${endDate} 23:59:59`); }
+  const today = new Date().toISOString().slice(0, 10);
+  const cappedEnd = isValid(endDate) && endDate > today ? today : endDate;
+  if (isValid(cappedEnd)) { clauses.push(`${column} <= ?`); params.push(`${cappedEnd} 23:59:59`); }
   return { clause: clauses.join(' AND '), params };
 }
 
