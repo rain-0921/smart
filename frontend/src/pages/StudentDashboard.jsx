@@ -473,6 +473,7 @@ export default function StudentDashboard() {
   const openProfile = async () => {
     setProfileLoading(true);
     setShowProfileModal(true);
+    setPhotoFile(null);
     try {
       const res = await studentGetProfile();
       setProfile(res.data);
@@ -1746,6 +1747,23 @@ export default function StudentDashboard() {
                   ⚠ You have been flagged as an at-risk student. Contact your advisor for support.
                 </div>
               )}
+              <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: theme.radiusSm, background: theme.surface2, border: `1px solid ${theme.border}` }}>
+                <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Profile Photo (JPG/PNG, max 5MB)</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 52, height: 52, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${theme.border}`, flexShrink: 0, background: theme.surface3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {profileData?.photo_url ? (
+                      <img src={`http://localhost:5000${profileData.photo_url}`} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
+                    ) : (
+                      <span style={{ fontSize: 20 }}>🎓</span>
+                    )}
+                  </div>
+                  <label style={{ cursor: 'pointer', fontSize: 12, color: theme.accent, fontWeight: 500, padding: '6px 12px', borderRadius: theme.radiusSm, border: `1px solid ${theme.border}`, background: theme.surface }}>
+                    Choose Photo
+                    <input type="file" accept="image/jpeg,image/png" style={{ display: 'none' }} onChange={e => setPhotoFile(e.target.files[0] || null)} />
+                  </label>
+                  {photoFile && <span style={{ fontSize: 11, color: theme.textMuted }}>{photoFile.name}</span>}
+                </div>
+              </div>
               <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 16, marginBottom: 16 }} />
               {[
                 { label: 'Username', key: 'username', type: 'text' },
