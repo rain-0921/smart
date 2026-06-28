@@ -1,6 +1,7 @@
 import { token, fontDisplay } from '../../../theme';
 import { Modal } from '../../../components/shared';
 import { label, inputStyle, inputNum, btnPrimary } from '../components/styles';
+import { BASE_URL } from '../../../services/api';
 
 export function CourseModal({ editingCourse, courseForm, onChange, onClose, onSubmit }) {
   return (
@@ -29,9 +30,9 @@ export function CourseModal({ editingCourse, courseForm, onChange, onClose, onSu
   );
 }
 
-export function ModuleModal({ moduleForm, onChange, onClose, onSubmit }) {
+export function ModuleModal({ editingModule, moduleForm, onChange, onClose, onSubmit }) {
   return (
-    <Modal title="Add Module" onClose={onClose}>
+    <Modal title={editingModule ? 'Edit Module' : 'Add Module'} onClose={onClose}>
       {[{ label: 'Title', key: 'title' }, { label: 'Description', key: 'description' }].map(f => (
         <div key={f.key} style={{ marginBottom: 14 }}>
           <label style={label}>{f.label}</label>
@@ -40,15 +41,15 @@ export function ModuleModal({ moduleForm, onChange, onClose, onSubmit }) {
         </div>
       ))}
       <button className="ins-btn" onClick={onSubmit} style={btnPrimary}>
-        Add Module
+        {editingModule ? 'Update' : 'Add'} Module
       </button>
     </Modal>
   );
 }
 
-export function LessonModal({ lessonForm, onChange, onClose, onSubmit }) {
+export function LessonModal({ editingLesson, lessonForm, onChange, onClose, onSubmit }) {
   return (
-    <Modal title="Add Lesson" onClose={onClose}>
+    <Modal title={editingLesson ? 'Edit Lesson' : 'Add Lesson'} onClose={onClose}>
       <div style={{ marginBottom: 14 }}>
         <label style={label}>Title</label>
         <input className="ins-input" style={inputStyle}
@@ -106,7 +107,7 @@ export function LessonModal({ lessonForm, onChange, onClose, onSubmit }) {
           value={lessonForm.duration_minutes} onChange={e => onChange({ ...lessonForm, duration_minutes: e.target.value })} />
       </div>
       <button className="ins-btn" onClick={onSubmit} style={btnPrimary}>
-        Add Lesson
+        {editingLesson ? 'Update' : 'Add'} Lesson
       </button>
     </Modal>
   );
@@ -122,7 +123,7 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
             value={quizForm[f.key]} onChange={e => onChange({ ...quizForm, [f.key]: e.target.value })} />
         </div>
       ))}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div>
           <label style={label}>Due Date</label>
           <input className="ins-input" type="datetime-local" style={inputStyle}
@@ -138,6 +139,8 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
           <input className="ins-input" type="number" min="1" style={inputStyle}
             value={quizForm.max_attempts} onChange={e => onChange({ ...quizForm, max_attempts: e.target.value })} />
         </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div>
           <label style={label}>Submission Type</label>
           <select className="ins-select" style={inputStyle}
@@ -145,13 +148,20 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
             {['online_quiz', 'file_upload', 'mixed'].map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label style={label}>Status</label>
-        <select className="ins-select" style={inputStyle}
-          value={quizForm.status} onChange={e => onChange({ ...quizForm, status: e.target.value })}>
-          {['draft', 'published', 'archived'].map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <div>
+          <label style={label}>Questions per Attempt</label>
+          <input className="ins-input" type="number" min="1" placeholder="All questions"
+            style={inputStyle}
+            value={quizForm.num_questions_per_attempt}
+            onChange={e => onChange({ ...quizForm, num_questions_per_attempt: e.target.value })} />
+        </div>
+        <div>
+          <label style={label}>Status</label>
+          <select className="ins-select" style={inputStyle}
+            value={quizForm.status} onChange={e => onChange({ ...quizForm, status: e.target.value })}>
+            {['draft', 'published', 'archived'].map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
       </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, cursor: 'pointer', fontSize: 13, color: token.inkSoft }}>
         <input type="checkbox" checked={quizForm.randomize_questions}
@@ -232,7 +242,7 @@ export function GradeModal({ gradingItem, gradeForm, onChange, onClose, onSubmit
           <div style={{ marginTop: 8 }}>
             <strong>File:</strong>{' '}
             {gradingItem.file_url
-              ? <a href={`http://localhost:5000${gradingItem.file_url}`} target="_blank" rel="noreferrer" style={{ color: token.brass }}>Download</a>
+              ? <a href={`${BASE_URL}${gradingItem.file_url}`} target="_blank" rel="noreferrer" style={{ color: token.brass }}>Download</a>
               : <span style={{ color: token.inkFaint }}>No file</span>
             }
           </div>
@@ -299,7 +309,7 @@ export function ProfileModal({ profileForm, photoFile, onChange, onPhotoSelect, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${token.line}`, background: token.surface3, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {profileForm.photo_url
-              ? <img src={`http://localhost:5000${profileForm.photo_url}`} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
+              ? <img src={`${BASE_URL}${profileForm.photo_url}`} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display = 'none'; }} />
               : <span style={{ fontSize: 24 }}>👨‍🏫</span>
             }
           </div>
@@ -438,7 +448,7 @@ export function StudentDetailModal({ studentDetail, onClose }) {
                     <div style={{ color: token.inkFaint, fontSize: 11, marginTop: 2 }}>{s.course_title} · {new Date(s.created_at).toLocaleDateString()}</div>
                   </div>
                   {s.file_url && (
-                    <a href={`http://localhost:5000${s.file_url}`} target="_blank" rel="noreferrer"
+                    <a href={`${BASE_URL}${s.file_url}`} target="_blank" rel="noreferrer"
                       style={{ fontSize: 11, color: token.brass, fontWeight: 600, textDecoration: 'none', padding: '4px 10px', border: `1px solid ${token.brass}40`, borderRadius: 6 }}>
                       Download file
                     </a>

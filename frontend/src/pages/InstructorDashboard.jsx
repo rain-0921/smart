@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
@@ -8,8 +7,8 @@ import {
 import {
   instrGetDashboard, instrGetProfile, instrUpdateProfile,
   instrGetCourses, instrCreateCourse, instrUpdateCourse, instrDeleteCourse,
-  instrGetModules, instrCreateModule, instrDeleteModule,
-  instrCreateLesson, instrDeleteLesson,
+  instrGetModules, instrCreateModule, instrUpdateModule, instrDeleteModule,
+  instrCreateLesson, instrUpdateLesson, instrDeleteLesson,
   instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrDeleteQuiz,
   instrGetQuestions, instrAddQuestion, instrUpdateQuestion, instrDeleteQuestion,
   instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
@@ -66,6 +65,8 @@ export default function InstructorDashboard() {
   const [showGradeModal, setShowGradeModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
+  const [editingModule, setEditingModule] = useState(null);
+  const [editingLesson, setEditingLesson] = useState(null);
   const [editingQuiz, setEditingQuiz] = useState(null);
   const [editingFeedback, setEditingFeedback] = useState(null);
   const [gradingItem, setGradingItem] = useState(null);
@@ -76,7 +77,7 @@ export default function InstructorDashboard() {
   const blankCourse   = { title: '', description: '', status: 'draft' };
   const blankModule  = { title: '', description: '' };
   const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '', file: null };
-  const blankQuiz    = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', status: 'draft' };
+  const blankQuiz    = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', num_questions_per_attempt: '', status: 'draft' };
   const blankQ       = { question_type: 'mcq', question_text: '', options: ['', '', '', ''], correct_answer: '', points: 1, improvement_tip: '' };
   const blankGrade   = { score: '', feedback: '' };
   const blankProfile = { username: '', phone_number: '', department: '', specialization: '', subjects_taught: '', office_hours: '' };
@@ -154,9 +155,15 @@ export default function InstructorDashboard() {
   // MODULE
   const saveModule = async () => {
     try {
-      await instrCreateModule(selectedCourse.course_id, moduleForm);
-      showAlert('Module added.');
+      if (editingModule) {
+        await instrUpdateModule(editingModule.module_id, moduleForm);
+        showAlert('Module updated.');
+      } else {
+        await instrCreateModule(selectedCourse.course_id, moduleForm);
+        showAlert('Module added.');
+      }
       setShowModuleModal(false);
+      setEditingModule(null);
       instrGetModules(selectedCourse.course_id).then(r => setModules(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
@@ -172,22 +179,30 @@ export default function InstructorDashboard() {
   // LESSON
   const saveLesson = async () => {
     try {
-      if (lessonForm.file) {
+      if (editingLesson) {
         const fd = new FormData();
         fd.append('title', lessonForm.title);
+        fd.append('content_type', lessonForm.content_type);
+        fd.append('content_url', lessonForm.content_url || '');
+        fd.append('content_text', lessonForm.content_text || '');
         fd.append('duration_minutes', lessonForm.duration_minutes || '');
-        fd.append('file', lessonForm.file);
-        const t = localStorage.getItem('token');
-        await axios.post(
-          `http://localhost:5000/api/instructor/modules/${selectedModule.module_id}/lessons`,
-          fd,
-          { headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'multipart/form-data' } }
-        );
+        if (lessonForm.file) fd.append('file', lessonForm.file);
+        await instrUpdateLesson(editingLesson.lesson_id, fd);
+        showAlert('Lesson updated.');
       } else {
-        await instrCreateLesson(selectedModule.module_id, lessonForm);
+        if (lessonForm.file) {
+          const fd = new FormData();
+          fd.append('title', lessonForm.title);
+          fd.append('duration_minutes', lessonForm.duration_minutes || '');
+          fd.append('file', lessonForm.file);
+          await instrCreateLesson(selectedModule.module_id, fd);
+        } else {
+          await instrCreateLesson(selectedModule.module_id, lessonForm);
+        }
+        showAlert('Lesson added.');
       }
-      showAlert('Lesson added.');
       setShowLessonModal(false);
+      setEditingLesson(null);
       instrGetModules(selectedCourse.course_id).then(r => setModules(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
@@ -600,12 +615,14 @@ export default function InstructorDashboard() {
           feedbackBands={feedbackBands}
           feedbackWarning={feedbackWarning}
           students={students}
-          onAddModule={() => { setModuleForm(blankModule); setShowModuleModal(true); }}
-          onAddLesson={(mod) => { setSelectedModule(mod); setLessonForm(blankLesson); setShowLessonModal(true); }}
+          onAddModule={() => { setEditingModule(null); setModuleForm(blankModule); setShowModuleModal(true); }}
+          onEditModule={(mod) => { setEditingModule(mod); setModuleForm({ title: mod.title, description: mod.description || '' }); setShowModuleModal(true); }}
+          onAddLesson={(mod) => { setSelectedModule(mod); setEditingLesson(null); setLessonForm(blankLesson); setShowLessonModal(true); }}
+          onEditLesson={(l) => { setEditingLesson(l); setLessonForm({ title: l.title, content_type: l.content_type || 'text', content_url: l.content_url || '', content_text: l.content_text || '', duration_minutes: l.duration_minutes || '', file: null }); setShowLessonModal(true); }}
           onDeleteModule={deleteModule}
           onDeleteLesson={deleteLesson}
           onAddQuiz={() => { setEditingQuiz(null); setQuizForm(blankQuiz); setShowQuizModal(true); }}
-          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: q.due_date || '', time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', status: q.status || 'draft' }); setShowQuizModal(true); }}
+          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: q.due_date || '', time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', num_questions_per_attempt: q.num_questions_per_attempt || '', status: q.status || 'draft' }); setShowQuizModal(true); }}
           onDeleteQuiz={deleteQuiz}
           onToggleQuiz={(q) => selectedQuiz?.quiz_id === q.quiz_id ? setSelectedQuiz(null) : openQuiz(q)}
           onAddQuestion={() => { setEditingQuestionId(null); setQForm(blankQ); setShowQModal(true); }}
@@ -632,17 +649,19 @@ export default function InstructorDashboard() {
       )}
       {showModuleModal && (
         <ModuleModal
+          editingModule={editingModule}
           moduleForm={moduleForm}
           onChange={setModuleForm}
-          onClose={() => setShowModuleModal(false)}
+          onClose={() => { setShowModuleModal(false); setEditingModule(null); }}
           onSubmit={saveModule}
         />
       )}
       {showLessonModal && (
         <LessonModal
+          editingLesson={editingLesson}
           lessonForm={lessonForm}
           onChange={setLessonForm}
-          onClose={() => setShowLessonModal(false)}
+          onClose={() => { setShowLessonModal(false); setEditingLesson(null); }}
           onSubmit={saveLesson}
         />
       )}

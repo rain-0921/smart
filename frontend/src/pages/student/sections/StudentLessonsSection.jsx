@@ -4,6 +4,7 @@ import {
   quizItem, quizIcon, quizInfo, quizName, quizMeta, quizStatus, statusPill,
   lessonRow, quizQuestion, radioLabel, gradeRow, gradeTitle, formInput, statusBadge,
 } from '../components/styles';
+import { BASE_URL } from '../../../services/api';
 
 export function ModulesPanel({ selectedCourse, modules, search, selectedLesson, activeQuiz, quizResult, onSelectLesson, onCompleteModule }) {
   const filteredModules = modules.filter(m =>
@@ -95,18 +96,20 @@ export function QuizPlayerPanel({ activeQuiz, timeLeft, formatTime, quizAnswers,
             <span style={{ color: theme.textMuted, fontWeight: 400, fontSize: 12 }}> ({q.points} pts)</span>
           </div>
           {q.question_type === 'mcq' && q.options
-            ? JSON.parse(q.options).map((opt, oi) => (
-              <label key={oi} style={radioLabel}>
-                <input
-                  type="radio"
-                  name={`q_${q.question_id}`}
-                  value={opt}
-                  checked={quizAnswers[q.question_id] === opt}
-                  onChange={() => onChangeAnswer(q.question_id, opt)}
-                />
-                {' '}{opt}
-              </label>
-            ))
+            ? (() => {
+                try { return JSON.parse(q.options).map((opt, oi) => (
+                  <label key={oi} style={radioLabel}>
+                    <input
+                      type="radio"
+                      name={`q_${q.question_id}`}
+                      value={opt}
+                      checked={quizAnswers[q.question_id] === opt}
+                      onChange={() => onChangeAnswer(q.question_id, opt)}
+                    />
+                    {' '}{opt}
+                  </label>
+                )); } catch { return null; }
+              })()
             : <input
                 style={{ ...formInput, marginTop: 6 }}
                 placeholder={q.question_type === 'fill_blank' ? 'Fill in the blank...' : 'Your answer...'}
@@ -520,7 +523,7 @@ export function AssignmentPanel({
           )}
           {submission.file_url && (
             <div style={{ marginTop: 6 }}>
-              <a href={`http://localhost:5000${submission.file_url}`} target="_blank" rel="noreferrer"
+              <a href={`${BASE_URL}${submission.file_url}`} target="_blank" rel="noreferrer"
                 style={{ color: theme.accent, fontSize: 13 }}>
                 📄 View submitted file
               </a>

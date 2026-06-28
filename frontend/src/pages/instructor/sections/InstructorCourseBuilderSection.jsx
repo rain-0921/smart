@@ -1,7 +1,7 @@
 import { token, fontMono } from '../../../theme';
 import { cardBase, hSub, btnRow, btnIcon, inputDate, StatusBadge } from '../components/styles';
 
-export function BuilderModulesPanel({ modules, onAddModule, onAddLesson, onDeleteModule, onDeleteLesson }) {
+export function BuilderModulesPanel({ modules, onAddModule, onEditModule, onAddLesson, onEditLesson, onDeleteModule, onDeleteLesson }) {
   return (
     <div className="ins-card" style={cardBase}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -17,6 +17,10 @@ export function BuilderModulesPanel({ modules, onAddModule, onAddLesson, onDelet
             <div style={{ background: token.surface2, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontWeight: 700, fontSize: 14, color: token.ink }}>{mod.title}</span>
               <div style={{ display: 'flex', gap: 6 }}>
+                <button className="ins-btn" onClick={() => onEditModule(mod)}
+                  style={{ background: token.infoSoft, color: token.info, border: 'none', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                  Edit
+                </button>
                 <button className="ins-btn" onClick={() => onAddLesson(mod)}
                   style={{ background: token.infoSoft, color: token.info, border: 'none', borderRadius: 5, padding: '3px 8px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
                   + Lesson
@@ -34,7 +38,13 @@ export function BuilderModulesPanel({ modules, onAddModule, onAddLesson, onDelet
                   {l.title}
                   {l.duration_minutes && <span style={{ fontSize: 11, color: token.inkFaint, marginLeft: 6, fontFamily: fontMono }}>{l.duration_minutes}min</span>}
                 </div>
-                <button className="ins-btn" onClick={() => onDeleteLesson(l.lesson_id)} style={btnIcon}>✕</button>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button className="ins-btn" onClick={() => onEditLesson(l)}
+                    style={{ background: token.infoSoft, color: token.info, border: 'none', borderRadius: 4, padding: '2px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 600 }}>
+                    Edit
+                  </button>
+                  <button className="ins-btn" onClick={() => onDeleteLesson(l.lesson_id)} style={btnIcon}>✕</button>
+                </div>
               </div>
             ))}
           </div>
@@ -294,7 +304,7 @@ export function BuilderAnalyticsShell({ analytics, range, onChangeFrom, onChange
 export default function InstructorCourseBuilderSection({
   selectedCourse, modules, quizzes, selectedQuizId, questions, feedbackBands, feedbackWarning,
   students,
-  onAddModule, onAddLesson, onDeleteModule, onDeleteLesson,
+  onAddModule, onEditModule, onAddLesson, onEditLesson, onDeleteModule, onDeleteLesson,
   onAddQuiz, onEditQuiz, onDeleteQuiz, onToggleQuiz,
   onAddQuestion, onEditQuestion, onDeleteQuestion,
   onAddBand, onEditBand, onDeleteBand,
@@ -314,7 +324,9 @@ export default function InstructorCourseBuilderSection({
       <BuilderModulesPanel
         modules={modules}
         onAddModule={onAddModule}
+        onEditModule={onEditModule}
         onAddLesson={onAddLesson}
+        onEditLesson={onEditLesson}
         onDeleteModule={onDeleteModule}
         onDeleteLesson={onDeleteLesson}
       />

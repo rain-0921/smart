@@ -84,11 +84,14 @@ export default function StudentDashboard() {
     return () => document.removeEventListener('std-goto-courses', handler);
   }, []);
 
-  // Timer for quiz
+  // Timer for quiz — does NOT depend on quizAnswers to avoid resetting on every keystroke
+  const quizAnswersRef = useRef(quizAnswers);
+  quizAnswersRef.current = quizAnswers;
+
   useEffect(() => {
     if (!activeQuiz || timeLeft === null) return;
     if (timeLeft <= 0) {
-      const answers = Object.entries(quizAnswers).map(([question_id, user_answer]) => ({
+      const answers = Object.entries(quizAnswersRef.current).map(([question_id, user_answer]) => ({
         question_id: parseInt(question_id), user_answer
       }));
       studentSubmitQuiz(activeQuiz.attempt_id, { answers })
@@ -106,8 +109,7 @@ export default function StudentDashboard() {
     }
     const timer = setTimeout(() => setTimeLeft(t => t - 1), 1000);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, activeQuiz, quizAnswers]);
+  }, [timeLeft, activeQuiz, showAlert]);
 
   // Fetch data on tab change
   useEffect(() => {
