@@ -58,27 +58,29 @@ exports.addUser = async (req, res) => {
     } catch (_) {}
   }
   try {
-    const [existing] = await db.execute(
-      'SELECT user_id FROM user WHERE email = ?', [email]
-    );
-    if (existing.length > 0) {
-      return res.status(400).json({ message: 'Email already exists' });
-    }
     const password_hash = await bcrypt.hash(password, 10);
-    await db.execute(
+    const [result] = await db.execute(
       `INSERT INTO user (username, email, password_hash, role, department, phone_number)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [username, email, password_hash, role, department || null, phone_number || null]
     );
-    const [[{ insertId }]] = await db.execute('SELECT LAST_INSERT_ID()');
+    const insertId = result.insertId;
     if (role === 'student') {
-      await db.execute('INSERT INTO student_profile (user_id) VALUES (?)', [insertId]);
+      await db.execute('INSERT IGNORE INTO student_profile (user_id) VALUES (?)', [insertId]);
     } else if (role === 'instructor') {
-      await db.execute('INSERT INTO instructor_profile (user_id) VALUES (?)', [insertId]);
+      await db.execute('INSERT IGNORE INTO instructor_profile (user_id) VALUES (?)', [insertId]);
     }
     res.status(201).json({ message: 'User created successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('[addUser]', error.code, error.message);
+    let msg = 'Server error';
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.message.includes('email')) msg = 'Email already exists';
+      else if (error.message.includes('username')) msg = 'Username already exists';
+      else msg = 'A user with that username or email already exists';
+    } else if (error.code === 'ER_NO_REFERENCED') msg = 'Invalid department. Please select a valid department.';
+    else if (error.code === 'ER_NO_TABLE') msg = 'System configuration error — please contact support.';
+    res.status(400).json({ message: msg });
   }
 };
 
@@ -100,7 +102,10 @@ exports.editUser = async (req, res) => {
     );
     res.json({ message: 'User updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('[editUser]', error.code, error.message);
+    let msg = 'Failed to update user';
+    if (error.code === 'ER_DUP_ENTRY')  msg = 'Email already exists';
+    res.status(400).json({ message: msg });
   }
 };
 
@@ -324,10 +329,15 @@ exports.createNotification = async (req, res) => {
   try {
     if (user_id) {
       // ── Mode 1: single recipient ───────────────────────────────────────────
+      // IMPORTANT: do NOT set target_role here. If target_role were set (e.g. to
+      // 'student' for a single student's notification), the row would also match
+      // every other student in getNotifications queries that use
+      // "WHERE user_id=? OR target_role='student'", causing notifications to
+      // appear for ALL students instead of just the intended recipient.
       await db.execute(
         `INSERT INTO notification (user_id, title, message, type, target_role, scheduled_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [user_id, title, message, notifType, target_role || null, scheduledAt]
+         VALUES (?, ?, ?, ?, NULL, ?)`,
+        [user_id, title, message, notifType, scheduledAt]
       );
       res.status(201).json({ message: 'Notification created successfully', recipients: 1 });
 
@@ -810,7 +820,73 @@ exports.exportActivityLogs = async (req, res) => {
   }
 };
 
+// ─── ADVISOR ASSIGNMENT ─────────────────────────────────
+
+// Get all students with their current advisor (for the admin assignment table).
+exports.getAllStudentsWithAdvisor = async (req, res) => {
+  try {
+    const [students] = await db.execute(
+      `SELECT sp.user_id, u.username, u.email, u.department, u.status,
+              sp.advisor_id,
+              a.username AS advisor_name, a.email AS advisor_email
+       FROM student_profile sp
+       JOIN user u ON sp.user_id = u.user_id
+       LEFT JOIN user a ON sp.advisor_id = a.user_id
+       ORDER BY u.username ASC`
+    );
+    res.json(students);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Get all advisors (active users with role='advisor') for the dropdown.
+exports.getAllAdvisors = async (req, res) => {
+  try {
+    const [advisors] = await db.execute(
+      `SELECT user_id, username, email, department, status
+       FROM user
+       WHERE role = 'advisor'
+       ORDER BY username ASC`
+    );
+    res.json(advisors);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Assign (or reassign / unassign) an advisor to a student.
+exports.assignAdvisor = async (req, res) => {
+  const { studentId } = req.params;
+  const { advisor_id } = req.body;
+
+  if (advisor_id !== null && advisor_id !== '') {
+    const [[student], [advisor]] = await Promise.all([
+      db.execute('SELECT user_id FROM user WHERE user_id=? AND role=\'student\'', [studentId]),
+      db.execute('SELECT user_id FROM user WHERE user_id=? AND role=\'advisor\'', [advisor_id]),
+    ]);
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+    if (!advisor) {
+      return res.status(400).json({ message: 'Selected user is not an advisor' });
+    }
+  }
+
+  try {
+    await db.execute(
+      'UPDATE student_profile SET advisor_id = ? WHERE user_id = ?',
+      [advisor_id || null, studentId]
+    );
+    const msg = advisor_id ? 'Advisor assigned successfully' : 'Advisor unassigned';
+    res.json({ message: msg });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── DASHBOARD ───────────────────────────────────────────
+
 // Single endpoint that bundles everything the Admin Dashboard page shows:
 // headline counts, user breakdown by role, top courses, and recent activity.
 

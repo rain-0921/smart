@@ -28,15 +28,16 @@ exports.getDashboard = async (req, res) => {
       [userId]
     );
 
-    // Upcoming deadlines
+    // Upcoming deadlines — only show quizzes the student has NOT yet submitted
     const [deadlines] = await db.execute(
       `SELECT q.title, q.due_date, c.title AS course_title
        FROM quiz q
        JOIN course c ON q.course_id = c.course_id
        JOIN enrollment e ON e.course_id = q.course_id
-       WHERE e.user_id = ? AND q.due_date > NOW()
+       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.user_id = ?
+       WHERE e.user_id = ? AND q.due_date > NOW() AND qa.quiz_attempt_id IS NULL
        ORDER BY q.due_date ASC LIMIT 5`,
-      [userId]
+      [userId, userId]
     );
 
     // Student profile
@@ -251,6 +252,26 @@ exports.completeLesson = async (req, res) => {
         [userId, moduleId]
       );
     }
+
+    // Recalculate and persist enrollment.completion_percent so dashboard stays in sync
+    const [[{ course_id }]] = await db.execute(
+      'SELECT course_id FROM module WHERE module_id = ?', [moduleId]
+    );
+    const [[{ total, done }]] = await db.execute(
+      `SELECT
+         COUNT(m.module_id) AS total,
+         COUNT(CASE WHEN mp.status = 'completed' THEN 1 END) AS done
+       FROM module m
+       LEFT JOIN module_progress mp ON mp.module_id = m.module_id AND mp.user_id = ?
+       WHERE m.course_id = ?`,
+      [userId, course_id]
+    );
+    const newPct = total > 0 ? parseFloat(((done / total) * 100).toFixed(2)) : 0;
+    await db.execute(
+      'UPDATE enrollment SET completion_percent = ? WHERE user_id = ? AND course_id = ?',
+      [newPct, userId, course_id]
+    );
+
     await db.execute(
       `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
        VALUES (?, 'lesson_complete', 'Student completed a lesson', 'module', ?)`,
@@ -270,14 +291,31 @@ exports.getCourseQuizzes = async (req, res) => {
     const [quizzes] = await db.execute(
       `SELECT q.quiz_id, q.title, q.description, q.due_date,
               q.time_limit_minutes, q.max_attempts, q.submission_type,
-              COUNT(qa.quiz_attempt_id) AS attempts_taken
+              COUNT(qa.quiz_attempt_id) AS attempts_taken,
+              MAX(CASE WHEN qa.status='graded' THEN 1 ELSE 0 END) AS has_grade,
+              MAX(qa.status) AS latest_status
        FROM quiz q
        LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.user_id = ?
        WHERE q.course_id = ? AND q.status = 'published'
        GROUP BY q.quiz_id`,
       [userId, courseId]
     );
-    res.json(quizzes);
+    const now = new Date();
+    const result = quizzes.map(q => {
+      const isAssignment = q.submission_type !== 'online_quiz';
+      const attemptsFull = q.attempts_taken >= q.max_attempts;
+      const pastDue = q.due_date && new Date(q.due_date) < now;
+      let status;
+      if (pastDue) {
+        status = isAssignment ? (q.attempts_taken > 0 ? 'submitted' : 'closed') : (q.has_grade ? 'graded' : 'closed');
+      } else if (attemptsFull) {
+        status = isAssignment ? 'submitted' : (q.has_grade ? 'graded' : 'completed');
+      } else {
+        status = isAssignment ? (q.attempts_taken > 0 ? 'submitted' : 'available') : (q.has_grade ? 'graded' : 'available');
+      }
+      return { ...q, type: isAssignment ? 'assignment' : 'quiz', status };
+    });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -350,6 +388,15 @@ exports.submitQuiz = async (req, res) => {
     );
     if (attemptRows.length === 0) return res.status(404).json({ message: 'Attempt not found' });
 
+    // Security: verify the student is enrolled in this quiz's course
+    const [enrollRows] = await db.execute(
+      `SELECT 1 FROM enrollment e
+       JOIN quiz q ON e.course_id = q.course_id
+       WHERE e.user_id=? AND q.quiz_id=? AND e.status='active'`,
+      [userId, attemptRows[0].quiz_id]
+    );
+    if (enrollRows.length === 0) return res.status(403).json({ message: 'You are not enrolled in this course' });
+
     let totalScore = 0;
     let totalPoints = 0;       // points from auto-gradable questions only
     let pendingReview = 0;     // number of short_answer questions awaiting manual grading
@@ -410,6 +457,45 @@ exports.submitQuiz = async (req, res) => {
       [percentage, attemptId]
     );
 
+    // ── Recalculate GPA from all graded attempts, then notify advisor if below 2.0 ──
+    const [[{ avgScore }]] = await db.execute(
+      `SELECT AVG(score) AS avgScore FROM quiz_attempt
+       WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
+      [userId]
+    );
+    const newGpa = avgScore ? Math.round((avgScore / 100) * 4 * 100) / 100 : 0;
+    await db.execute(
+      `UPDATE student_profile SET gpa=? WHERE user_id=?`,
+      [newGpa, userId]
+    );
+    const [[profile]] = await db.execute(
+      `SELECT sp.advisor_id, u.username AS student_name
+       FROM student_profile sp JOIN user u ON sp.user_id=u.user_id
+       WHERE sp.user_id=?`,
+      [userId]
+    );
+    if (profile && profile.advisor_id) {
+      const [[{ wasAtRisk }]] = await db.execute(
+        `SELECT is_at_risk AS wasAtRisk FROM student_profile WHERE user_id=?`,
+        [userId]
+      );
+      const nowAtRisk = newGpa < 2.0 ? 1 : 0;
+      if (nowAtRisk === 1 && wasAtRisk.wasAtRisk !== 1) {
+        await db.execute(
+          `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [profile.advisor_id,
+           `Low GPA Alert: ${profile.student_name}`,
+           `Your student ${profile.student_name}'s GPA has dropped to ${newGpa.toFixed(2)} (below 2.0). Please review their academic progress.`,
+           'alert', 'student', userId]
+        );
+      }
+      await db.execute(
+        `UPDATE student_profile SET is_at_risk=? WHERE user_id=?`,
+        [nowAtRisk, userId]
+      );
+    }
+
     // Look up the score-band feedback message for this quiz (if the instructor configured any)
     const [bandRows] = await db.execute(
       `SELECT feedback_message FROM quiz_feedback
@@ -445,7 +531,7 @@ exports.getAssignment = async (req, res) => {
   const { quizId } = req.params;
   try {
     const [quizRows] = await db.execute(
-      `SELECT q.quiz_id, q.title, q.description, q.due_date, q.submission_type, q.status
+      `SELECT q.quiz_id, q.title, q.description, q.due_date, q.submission_type, q.status, q.accepted_file_types
        FROM quiz q WHERE q.quiz_id=?`, [quizId]
     );
     if (quizRows.length === 0) return res.status(404).json({ message: 'Assignment not found' });
@@ -477,7 +563,8 @@ exports.getAssignment = async (req, res) => {
 
     res.json({
       quiz,
-      question: questions[0] || null,
+      // Only return the question for non-file_upload types
+      question: quiz.submission_type !== 'file_upload' ? (questions[0] || null) : null,
       submission: attempts[0] || null,
       deadline_passed: !!isClosed
     });
@@ -542,15 +629,35 @@ exports.submitAssignment = async (req, res) => {
       return res.status(403).json({ message: 'You are not enrolled in this course' });
     }
 
-    // The prompt question to attach the file answer to
-    const [questions] = await db.execute(
-      `SELECT question_id FROM question WHERE quiz_id=? ORDER BY sort_order LIMIT 1`, [quizId]
-    );
-    if (questions.length === 0) {
-      cleanupUpload();
-      return res.status(400).json({ message: 'This assignment has no submission prompt configured' });
+    // For file_upload quizzes: auto-create a placeholder question if needed so
+    // the answer record has a valid FK. The question text doubles as the assignment
+    // instructions shown to the student.
+    let questionId = null;
+    if (quiz.submission_type === 'file_upload') {
+      const [existingQ] = await db.execute(
+        `SELECT question_id FROM question WHERE quiz_id=? ORDER BY sort_order LIMIT 1`, [quizId]
+      );
+      if (existingQ.length > 0) {
+        questionId = existingQ[0].question_id;
+      } else {
+        // Create a placeholder question; its text will serve as the instructions
+        const [insResult] = await db.execute(
+          `INSERT INTO question (quiz_id, question_type, question_text, correct_answer, points, sort_order)
+           VALUES (?, 'short_answer', 'File submission — no text answer required.', '*', 0, 1)`,
+          [quizId]
+        );
+        questionId = insResult.insertId;
+      }
+    } else {
+      const [questions] = await db.execute(
+        `SELECT question_id FROM question WHERE quiz_id=? ORDER BY sort_order LIMIT 1`, [quizId]
+      );
+      if (questions.length === 0) {
+        cleanupUpload();
+        return res.status(400).json({ message: 'This assignment has no submission prompt configured' });
+      }
+      questionId = questions[0].question_id;
     }
-    const questionId = questions[0].question_id;
 
     const fileUrl = `/uploads/${req.file.filename}`;
 
@@ -680,8 +787,18 @@ exports.getNotifications = async (req, res) => {
 
 exports.markNotificationRead = async (req, res) => {
   const { id } = req.params;
+  const userId = req.user.user_id;
   try {
-    await db.execute('UPDATE notification SET is_read=1 WHERE notification_id=?', [id]);
+    // Guard: only allow marking as read if the notification belongs to this user
+    // or is a role-broadcast for 'student'. This prevents cross-user marking.
+    const [result] = await db.execute(
+      `UPDATE notification SET is_read=1
+       WHERE notification_id=? AND (user_id=? OR target_role='student')`,
+      [id, userId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
     res.json({ message: 'Marked as read' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -814,7 +931,7 @@ exports.getGradeDetail = async (req, res) => {
   const userId = req.user.user_id;
   const { attemptId } = req.params;
   try {
-    // Verify this attempt belongs to the requesting student
+    // Verify this attempt belongs to the requesting student AND student is enrolled
     const [attemptRows] = await db.execute(
       `SELECT qa.quiz_attempt_id, qa.quiz_id, qa.score, qa.status,
               qa.start_time, qa.end_time,
@@ -823,8 +940,9 @@ exports.getGradeDetail = async (req, res) => {
        FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
-       WHERE qa.quiz_attempt_id = ? AND qa.user_id = ?`,
-      [attemptId, userId]
+       JOIN enrollment e ON e.course_id = c.course_id AND e.user_id = ?
+       WHERE qa.quiz_attempt_id = ? AND qa.user_id = ? AND e.status = 'active'`,
+      [userId, attemptId, userId]
     );
     if (attemptRows.length === 0) {
       return res.status(404).json({ message: 'Attempt not found' });

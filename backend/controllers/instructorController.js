@@ -440,7 +440,7 @@ exports.getCourseQuizzes = async (req, res) => {
     const [quizzes] = await db.execute(
       `SELECT q.quiz_id, q.course_id, q.created_by, q.title, q.description, q.status,
               q.due_date, q.time_limit_minutes, q.max_attempts, q.randomize_questions,
-              q.num_questions_per_attempt, q.submission_type, q.created_at,
+              q.num_questions_per_attempt, q.submission_type, q.accepted_file_types, q.created_at,
               COUNT(DISTINCT qq.question_id) AS question_count,
               COUNT(DISTINCT qa.quiz_attempt_id) AS attempt_count
        FROM quiz q
@@ -462,18 +462,18 @@ exports.createQuiz = async (req, res) => {
   const { courseId } = req.params;
   const { title, description, due_date, time_limit_minutes,
           max_attempts, randomize_questions, submission_type,
-          num_questions_per_attempt } = req.body;
+          num_questions_per_attempt, accepted_file_types } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
     await requireCourseOwnership(courseId, userId);
     const [result] = await db.execute(
       `INSERT INTO quiz (course_id, created_by, title, description, due_date,
        time_limit_minutes, max_attempts, randomize_questions, submission_type,
-       num_questions_per_attempt, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,'draft')`,
+       num_questions_per_attempt, accepted_file_types, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,'draft')`,
       [courseId, userId, title, description||null, due_date||null,
        time_limit_minutes||null, max_attempts||1, randomize_questions||false,
-       submission_type||'online_quiz', num_questions_per_attempt||null]
+       submission_type||'online_quiz', num_questions_per_attempt||null, accepted_file_types||null]
     );
     res.status(201).json({ message: 'Quiz created', quiz_id: result.insertId });
   } catch (error) {
@@ -487,7 +487,7 @@ exports.updateQuiz = async (req, res) => {
   const { quizId } = req.params;
   const { title, description, due_date, time_limit_minutes,
           max_attempts, randomize_questions, submission_type,
-          num_questions_per_attempt, status } = req.body;
+          num_questions_per_attempt, accepted_file_types, status } = req.body;
   try {
     await requireQuizOwnership(quizId, userId);
     // Grab current status + course_id before update (needed for publish check + notify)
@@ -496,8 +496,8 @@ exports.updateQuiz = async (req, res) => {
     );
     if (!existing) return res.status(404).json({ message: 'Quiz not found' });
 
-    // Check has questions before publishing
-    if (status === 'published') {
+    // Check has questions before publishing (skip for file_upload type)
+    if (status === 'published' && submission_type !== 'file_upload') {
       const [[{ qCount }]] = await db.execute(
         `SELECT COUNT(*) AS qCount FROM question WHERE quiz_id=?`, [quizId]
       );
@@ -507,14 +507,17 @@ exports.updateQuiz = async (req, res) => {
     await db.execute(
       `UPDATE quiz SET title=?, description=?, due_date=?, time_limit_minutes=?,
        max_attempts=?, randomize_questions=?, submission_type=?,
-       num_questions_per_attempt=?, status=? WHERE quiz_id=?`,
+       num_questions_per_attempt=?, accepted_file_types=?, status=? WHERE quiz_id=?`,
       [title, description||null, due_date||null, time_limit_minutes||null,
        max_attempts||1, randomize_questions||false, submission_type||'online_quiz',
-       num_questions_per_attempt||null, status, quizId]
+       num_questions_per_attempt||null, accepted_file_types||null, status, quizId]
     );
 
     // ── FIX: notify enrolled students when quiz transitions to 'published' ──
     if (status === 'published' && existing.status !== 'published') {
+      const [[{ course_name }]] = await db.execute(
+        `SELECT title AS course_name FROM course WHERE course_id=?`, [existing.course_id]
+      );
       const studentIds = await getActiveEnrolledStudents(existing.course_id);
       if (studentIds.length > 0) {
         await Promise.all(
@@ -523,7 +526,7 @@ exports.updateQuiz = async (req, res) => {
               `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
                VALUES (?, ?, ?, ?, ?, ?)`,
               [uid, `New Quiz Available: ${title}`,
-               `A new quiz "${title}" has been published in your course.`,
+               `A new quiz "${title}" has been published in ${course_name}. Check your assignments and submit before the deadline.`,
                'quiz_published', 'quiz', quizId]
             )
           )
@@ -843,145 +846,260 @@ exports.getStudentDetail = async (req, res) => {
 function buildStudentsPdf(students, courseTitle) {
   const PAGE_W = 595;       // A4 width  in points
   const PAGE_H = 842;       // A4 height in points
-  const MARGIN = 36;
-  const ROW_H = 18;
-  const HEAD_Y = 90;        // y-coordinate of the table header
+  const MARGIN = 45;
+  const ROW_H = 22;
+  const TH = 20;                        // column-header row height
+  const HEAD_Y = 52;                    // top of column-header row
+  const COL_HEADER_BOTTOM = HEAD_Y + TH;// y-coordinate where column-header ends (=72)
+  const ROW_START_Y = COL_HEADER_BOTTOM + 15; // first row starts 8pt below header
+  const rowCapacity = Math.floor((PAGE_H - MARGIN - ROW_START_Y) / ROW_H);
+
   const COLS = [
-    { key: 'username',          label: 'Username',          x: MARGIN,        w: 110 },
-    { key: 'email',             label: 'Email',             x: MARGIN + 110,  w: 200 },
-    { key: 'enrollment_status', label: 'Status',            x: MARGIN + 310,  w: 60  },
-    { key: 'completion_percent',label: 'Completion %',      x: MARGIN + 370,  w: 70  },
-    { key: 'avg_score',         label: 'Avg Score',         x: MARGIN + 440,  w: 55  },
-    { key: 'is_at_risk',        label: 'Risk',              x: MARGIN + 495,  w: 40  },
+    { key: 'username',           label: 'Student',          x: MARGIN,       w: 90  },
+    { key: 'email',              label: 'Email',            x: MARGIN + 90,  w: 170 },
+    { key: 'enrollment_status',  label: 'Status',          x: MARGIN + 260, w: 55  },
+    { key: 'completion_percent',  label: 'Completion',      x: MARGIN + 315, w: 65  },
+    { key: 'avg_score',          label: 'Avg Score',        x: MARGIN + 380, w: 60  },
+    { key: 'is_at_risk',         label: 'Risk',             x: MARGIN + 440, w: 60  },
   ];
 
-  // Build PDF objects as a stream of `n 0 obj ... endobj`.
+  // ── Color palette ──────────────────────────────────────────────────────────
+  const C = {
+    headerBg:    [0.13, 0.26, 0.40],  // deep navy
+    headerText:  [1, 1, 1],
+    summaryBg:   [0.95, 0.97, 1.0],  // very light blue
+    summaryVal:  [0.13, 0.26, 0.40],  // navy values
+    rowAlt:      [0.97, 0.98, 1.0],  // alternating row tint
+    rowWhite:    [1, 1, 1],
+    colHeader:   [0.10, 0.22, 0.40], // slightly lighter navy for col headers
+    border:      [0.72, 0.78, 0.90],  // clear table grid lines
+    borderH:     [0.55, 0.62, 0.78], // slightly darker for outer border
+    riskYes:     [0.82, 0.12, 0.12],  // red
+    riskNo:      [0.12, 0.60, 0.28],  // green
+    statusActive:[0.12, 0.60, 0.28],
+    statusOther: [0.50, 0.50, 0.50],
+    labelText:   [0.45, 0.52, 0.65],  // muted label color
+    bodyText:    [0.18, 0.22, 0.32],
+  };
+
+  const rgb  = (c) => `${c[0].toFixed(3)} ${c[1].toFixed(3)} ${c[2].toFixed(3)}`;
+
+  // ── PDF object table ───────────────────────────────────────────────────────
   const objs = [];
-  const push = (body) => { objs.push(body); return objs.length; }; // 1-based id
+  const push = (body) => { objs.push(body); return objs.length; };
 
-  // 1: Catalog
-  const catalogId = push('<< /Type /Catalog /Pages 2 0 R >>');
-  // placeholder; fix after Pages is added
-
-  // We will register Pages later. For now, reserve id 2.
+  const catalogId   = push('<< /Type /Catalog /Pages 2 0 R >>');
   objs.push(null);
   const pagesId = 2;
 
-  // Font
-  const fontId = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const fontId    = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   const fontBoldId = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+  const fontOblId  = push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>');
 
-  // Helper to escape PDF strings
   const esc = (s) => String(s ?? '')
     .replace(/\\/g, '\\\\')
     .replace(/\(/g, '\\(')
     .replace(/\)/g, '\\)');
 
-  // ── Render content into one or more pages ──
-  const pages = []; // each page is an array of content-stream operators
-  const newPage = () => {
-    const ops = [];
-    pages.push(ops);
-    return ops;
+  // ── Page builder ───────────────────────────────────────────────────────────
+  const pages = [];
+  const newPage = () => { const ops = []; pages.push(ops); return ops; };
+
+  // Y landmarks (all measured from page BOTTOM, so larger = higher on page):
+  //   y=822  page top
+  //   y=808  page title
+  //   y=792  subtitle
+  //   y=776  header bar TOP, y=736 header bar BOTTOM
+  //   y=726  accent line
+  //   y=148  summary BOTTOM, y=120 summary TOP
+  //   y=126  col-header BOTTOM, y=106 col-header TOP
+  //   y=96   ROW[0] TOP
+  //   y=20   last row BOTTOM (above 40pt page margin)
+
+  const drawPageHeader = (ops, pageNum, totalPages) => {
+    // ── Page title at top ──────────────────────────────────────────────────
+    ops.push('BT');
+    ops.push('/F2 14 Tf');
+    ops.push(`${rgb(C.headerBg)} rg`);
+    ops.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 34} Tm`);
+    ops.push(`(${esc(courseTitle || 'Student Progress Report')}) Tj`);
+    ops.push('ET');
+
+    // ── Navy header bar (contains subtitle + page number on same row) ───────
+    ops.push(`${MARGIN} ${PAGE_H - 776} ${PAGE_W - 2 * MARGIN} 40 re f`);  // rect from y=736 to y=776
+    ops.push(`${rgb(C.headerBg)} rg`);
+
+    // Subtitle text (left)
+    ops.push('BT');
+    ops.push('/F3 9 Tf');
+    ops.push(`${rgb(C.headerText)} rg`);
+    ops.push(`1 0 0 1 ${MARGIN + 10} ${PAGE_H - 790} Tm`);
+    ops.push(`(Course Progress Report  ·  Generated ${esc(new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'}))}) Tj`);
+    ops.push('ET');
+
+    // Page number (right)
+    ops.push('BT');
+    ops.push('/F3 9 Tf');
+    ops.push(`${rgb(C.headerText)} rg`);
+    ops.push(`1 0 0 1 ${PAGE_W - MARGIN - 80} ${PAGE_H - 790} Tm`);
+    ops.push(`(Page ${pageNum} of ${totalPages}) Tj`);
+    ops.push('ET');
+
+    // ── Accent line below bar ────────────────────────────────────────────────
+    ops.push(`${MARGIN} ${PAGE_H - 726} ${PAGE_W - 2 * MARGIN} 2 re f`);
+    ops.push(`0.22 0.48 0.72 rg`);
+    ops.push(`${rgb(C.headerBg)} rg`);  // reset fill to black for subsequent content
   };
 
-  // Page 1: title + table header
-  let ops = newPage();
-  ops.push('BT');
-  ops.push('/F2 16 Tf');           // bold
-  ops.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 60} Tm`);
-  ops.push(`(Student Progress Report) Tj`);
-  ops.push('/F1 11 Tf');
-  ops.push(`0 0 0 rg`);
-  ops.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 78} Tm`);
-  ops.push(`(Course: ${esc(courseTitle || 'Untitled')}) Tj`);
-  ops.push(`(Generated: ${esc(new Date().toISOString())}) Tj`);
+  // ── Summary stats ─────────────────────────────────────────────────────────
+  const totalStudents = students.length;
+  const overallAvg    = students.reduce((a, s) => a + Number(s.avg_score ?? 0), 0) / totalStudents || 0;
+  const atRiskCount   = students.filter(s => s.is_at_risk).length;
+  const totalQuizzes = students.reduce((a, s) => a + Number(s.quizzes_taken ?? 0), 0);
 
-  // Table header bar
-  ops.push('ET');
-  ops.push(`${MARGIN} ${PAGE_H - HEAD_Y - 4} ${PAGE_W - 2 * MARGIN} 18 re f`);
-  ops.push(`0.93 0.9 0.85 rg`);
+  const drawSummary = (ops) => {
+    const sx = MARGIN;
+    const sy = PAGE_H - 148;     // bottom of summary box
+    const sw = (PAGE_W - 2 * MARGIN) / 4;
+    const sh = 28;
 
-  ops.push('BT');
-  ops.push('/F2 10 Tf');
-  ops.push(`0.27 0.15 0.05 rg`);
-  for (const col of COLS) {
-    ops.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - HEAD_Y + 5} Tm`);
-    ops.push(`(${esc(col.label)}) Tj`);
-  }
-  ops.push('ET');
+    // Background
+    ops.push(`${sx} ${sy} ${PAGE_W - 2 * MARGIN} ${sh} re f`);
+    ops.push(`${rgb(C.summaryBg)} rg`);
+    ops.push(`${sx} ${sy} ${PAGE_W - 2 * MARGIN} ${sh} re f`);   // fill
+    ops.push(`${rgb(C.summaryBg)} rg`);
 
-  // Rows — each row prints below the previous; new page when out of space.
-  const ROW_START_Y = HEAD_Y + 14;
+    // Separator lines between stat cells
+    for (let i = 1; i < 4; i++) {
+      ops.push(`${sx + i * sw} ${sy} 1 ${sh} re f`);
+      ops.push(`${rgb(C.border)} rg`);
+    }
+
+    const stats = [
+      { label: 'Total Students', val: String(totalStudents) },
+      { label: 'Class Average',  val: overallAvg.toFixed(1) + '%' },
+      { label: 'At Risk',       val: String(atRiskCount) },
+      { label: 'Total Quizzes', val: String(totalQuizzes) },
+    ];
+    stats.forEach((s, i) => {
+      const cx = sx + i * sw + sw / 2;
+      ops.push('BT');
+      ops.push('/F2 14 Tf');
+      ops.push(`${rgb(C.summaryVal)} rg`);
+      ops.push(`1 0 0 1 ${cx - 18} ${sy + 13} Tm`);
+      ops.push(`(${s.val}) Tj`);
+      ops.push('/F3 8.5 Tf');
+      ops.push(`${rgb(C.labelText)} rg`);
+      ops.push(`1 0 0 1 ${cx - 22} ${sy + 3} Tm`);
+      ops.push(`(${s.label}) Tj`);
+      ops.push('ET');
+    });
+  };
+
+  // ── Column headers ────────────────────────────────────────────────────────
+  const drawTableHeader = (ops) => {
+    ops.push(`${MARGIN} ${PAGE_H - HEAD_Y - TH} ${PAGE_W - 2 * MARGIN} ${TH} re f`);
+    ops.push(`${rgb(C.colHeader)} rg`);
+
+    // Top border of column header row
+    ops.push(`${MARGIN} ${PAGE_H - HEAD_Y} ${PAGE_W - 2 * MARGIN} 1.5 re f`);
+    ops.push(`${rgb(C.headerBg)} rg`);
+
+    ops.push('BT');
+    ops.push('/F2 9.5 Tf');
+    ops.push(`${rgb(C.headerText)} rg`);
+    for (const col of COLS) {
+      ops.push(`1 0 0 1 ${col.x + 5} ${PAGE_H - HEAD_Y - TH + 6} Tm`);
+      ops.push(`(${esc(col.label)}) Tj`);
+    }
+    ops.push('ET');
+  };
+
+  // ── Row rendering ─────────────────────────────────────────────────────────
   let rowIndex = 0;
-  const rowCapacity = Math.floor((PAGE_H - MARGIN - ROW_START_Y - ROW_H) / ROW_H);
 
-  const printRow = (s, y) => {
+  const printRow = (s, y, shade) => {
     const cur = pages[pages.length - 1];
+
+    // Row background
+    cur.push(`${MARGIN} ${PAGE_H - y - ROW_H} ${PAGE_W - 2 * MARGIN} ${ROW_H} re f`);
+    cur.push(`${rgb(shade ? C.rowAlt : C.rowWhite)} rg`);
+
+    // Cell borders (vertical lines between columns)
+    for (let i = 1; i < COLS.length; i++) {
+      const bx = COLS[i].x;
+      cur.push(`${bx} ${PAGE_H - y} 1 ${-ROW_H} re f`);
+      cur.push(`${rgb(C.border)} rg`);
+    }
+
+    // Top border of row
+    cur.push(`${MARGIN} ${PAGE_H - y} ${PAGE_W - 2 * MARGIN} 0.5 re f`);
+    cur.push(`${rgb(C.border)} rg`);
+
+    // Cell text
     cur.push('BT');
     cur.push('/F1 9 Tf');
-    cur.push(`0 0 0 rg`);
+    cur.push(`${rgb(C.bodyText)} rg`);
     for (const col of COLS) {
       let v = s[col.key];
-      if (col.key === 'is_at_risk') v = v ? 'YES' : 'no';
-      if (col.key === 'completion_percent' || col.key === 'avg_score')
-        v = v == null ? '—' : Number(v).toFixed(1);
-      // truncate long values to fit column
+      let colColor = C.bodyText;
+      if (col.key === 'is_at_risk') {
+        v = s.is_at_risk ? 'At Risk' : 'OK';
+        colColor = s.is_at_risk ? C.riskYes : C.riskNo;
+      }
+      if (col.key === 'enrollment_status') {
+        v = String(v ?? '').charAt(0).toUpperCase() + String(v ?? '').slice(1);
+        colColor = v === 'Active' ? C.statusActive : C.statusOther;
+      }
+      if (col.key === 'avg_score')    v = v == null ? '—' : Number(v).toFixed(1) + '%';
+      if (col.key === 'completion_percent') v = v == null ? '—' : Number(v).toFixed(1) + '%';
+
       const txt = String(v ?? '');
-      const max = Math.max(1, Math.floor((col.w - 8) / 4.5));
+      const max = Math.max(1, Math.floor((col.w - 10) / 4.5));
       const truncated = txt.length > max ? txt.slice(0, max - 1) + '…' : txt;
-      cur.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - y} Tm`);
+
+      cur.push(`${rgb(colColor)} rg`);
+      cur.push(`1 0 0 1 ${col.x + 5} ${PAGE_H - y + 7} Tm`);
       cur.push(`(${esc(truncated)}) Tj`);
     }
     cur.push('ET');
-    // Row separator
-    cur.push(`0.85 0.83 0.78 rg`);
-    cur.push(`${MARGIN} ${PAGE_H - y - 12} ${PAGE_W - 2 * MARGIN} 0.5 re f`);
-    cur.push(`0 0 0 rg`);
   };
+
+  // ── Page assembly ──────────────────────────────────────────────────────────
+  const totalRows   = students.length;
+  const extraPages  = Math.max(0, Math.floor((totalRows - rowCapacity) / rowCapacity));
+  const totalPages  = 1 + extraPages;
+
+  let ops = newPage();
+  drawPageHeader(ops, 1, totalPages);
+  drawSummary(ops);
+  drawTableHeader(ops);
 
   for (const s of students) {
     if (rowIndex > 0 && rowIndex % rowCapacity === 0) {
-      // start new page with repeated header
       const newOps = newPage();
-      newOps.push('BT');
-      newOps.push('/F2 12 Tf');
-      newOps.push(`0.27 0.15 0.05 rg`);
-      newOps.push(`1 0 0 1 ${MARGIN} ${PAGE_H - 50} Tm`);
-      newOps.push(`(Student Progress Report - continued) Tj`);
-      newOps.push('ET');
-      // table header again
-      newOps.push(`${MARGIN} ${PAGE_H - HEAD_Y - 4} ${PAGE_W - 2 * MARGIN} 18 re f`);
-      newOps.push(`0.93 0.9 0.85 rg`);
-      newOps.push('BT');
-      newOps.push('/F2 10 Tf');
-      newOps.push(`0.27 0.15 0.05 rg`);
-      for (const col of COLS) {
-        newOps.push(`1 0 0 1 ${col.x + 4} ${PAGE_H - HEAD_Y + 5} Tm`);
-        newOps.push(`(${esc(col.label)}) Tj`);
-      }
-      newOps.push('ET');
+      const newPageNum = Math.floor(rowIndex / rowCapacity) + 1;
+      drawPageHeader(newOps, newPageNum, totalPages);
+      drawTableHeader(newOps);
     }
     const pageRow = rowIndex % rowCapacity;
-    printRow(s, ROW_START_Y + pageRow * ROW_H);
+    printRow(s, ROW_START_Y + pageRow * ROW_H, rowIndex % 2 === 1);
     rowIndex++;
   }
 
-  // Build Page objects (one per content stream)
+  // ── Serialize ───────────────────────────────────────────────────────────────
   const pageIds = [];
   for (let i = 0; i < pages.length; i++) {
     const contentStream = pages[i].join('\n');
     const contentObjId = push(`<< /Length ${Buffer.byteLength(contentStream, 'binary')} >>\nstream\n${contentStream}\nendstream`);
-    const pageObjId = push(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentObjId} 0 R >>`);
+    const pageObjId = push(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${fontBoldId} 0 R /F3 ${fontOblId} 0 R >> >> /Contents ${contentObjId} 0 R >>`);
     pageIds.push(pageObjId);
   }
 
-  // Pages dict (now we can fill id 2)
   objs[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
 
-  // ── Serialise ──
   let body = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
-  const offsets = [0]; // 1-based page object table; index 0 unused
+  const offsets = [0];
   for (let i = 0; i < objs.length; i++) {
     offsets.push(Buffer.byteLength(body, 'binary'));
     body += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
@@ -1132,6 +1250,52 @@ exports.gradeSubmission = async (req, res) => {
       `UPDATE quiz_attempt SET score=?, status='graded', end_time=NOW() WHERE quiz_attempt_id=?`,
       [score, attemptId]
     );
+
+    // ── Recalculate GPA and notify advisor if below 2.0 ──
+    const [attemptInfo] = await db.execute(
+      `SELECT qa.user_id, qa.score, u.username AS student_name, sp.advisor_id
+       FROM quiz_attempt qa
+       JOIN quiz q ON qa.quiz_id = q.quiz_id
+       JOIN user u ON qa.user_id = u.user_id
+       LEFT JOIN student_profile sp ON qa.user_id = sp.user_id
+       WHERE qa.quiz_attempt_id=?`,
+      [attemptId]
+    );
+    if (attemptInfo.length > 0) {
+      const { user_id, score, student_name, advisor_id } = attemptInfo[0];
+      const [[{ avgScore }]] = await db.execute(
+        `SELECT AVG(score) AS avgScore FROM quiz_attempt
+         WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
+        [user_id]
+      );
+      const newGpa = avgScore ? Math.round((avgScore / 100) * 4 * 100) / 100 : 0;
+      await db.execute(
+        `UPDATE student_profile SET gpa=? WHERE user_id=?`,
+        [newGpa, user_id]
+      );
+      if (advisor_id) {
+        const [[{ wasAtRisk }]] = await db.execute(
+          `SELECT is_at_risk AS wasAtRisk FROM student_profile WHERE user_id=?`,
+          [user_id]
+        );
+        const nowAtRisk = newGpa < 2.0 ? 1 : 0;
+        if (nowAtRisk === 1 && wasAtRisk.wasAtRisk !== 1) {
+          await db.execute(
+            `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [advisor_id,
+             `Low GPA Alert: ${student_name}`,
+             `Your student ${student_name}'s GPA has dropped to ${newGpa.toFixed(2)} (below 2.0). Please review their academic progress.`,
+             'alert', 'student', user_id]
+          );
+        }
+        await db.execute(
+          `UPDATE student_profile SET is_at_risk=? WHERE user_id=?`,
+          [nowAtRisk, user_id]
+        );
+      }
+    }
+
     // Update all answer records for this attempt with instructor feedback
     await db.execute(
       `UPDATE answer SET feedback=? WHERE quiz_attempt_id=?`,
@@ -1282,8 +1446,18 @@ exports.getNotifications = async (req, res) => {
 
 exports.markNotificationRead = async (req, res) => {
   const { id } = req.params;
+  const userId = req.user.user_id;
   try {
-    await db.execute(`UPDATE notification SET is_read=1 WHERE notification_id=?`, [id]);
+    // Guard: only allow marking as read if the notification belongs to this
+    // instructor or is a role-broadcast for 'instructor'.
+    const [result] = await db.execute(
+      `UPDATE notification SET is_read=1
+       WHERE notification_id=? AND (user_id=? OR target_role='instructor')`,
+      [id, userId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
     res.json({ message: 'Marked as read' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

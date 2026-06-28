@@ -421,7 +421,7 @@ async function seed() {
       [2,  8,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  'student',    null, '2025-03-01 09:05:00'],
       [3,  9,  'New Quiz Available',      'Limits Quiz is now open.',                 'quiz',        1, 'quiz',       4,  'student',    null, '2025-03-05 09:05:00'],
       [4,  10, 'At-Risk Alert',           'Your GPA has dropped below 2.0.',          'alert',       0, 'student_profile', 10, 'student', null,'2025-03-10 08:00:00'],
-      [5,  2,  'Student At Risk',         'student04 is at risk. Please follow up.',  'alert',       0, 'student_profile', 10, 'advisor', null,'2025-03-10 08:01:00'],
+      [5,  3,  'Student At Risk',         'student04 is at risk. Please follow up.',  'alert',       0, 'student_profile', 10, 'advisor', null,'2025-03-10 08:01:00'],
       [6,  7,  'Quiz Graded',             'Your HTML Basics Quiz has been graded.',   'quiz_result', 1, 'quiz_attempt', 2,'student',    null, '2025-03-23 10:00:00'],
       [7,  11, 'Course Reminder',         'Complete Module 9 before the deadline.',   'reminder',    0, 'module',     9,  'student',    '2025-04-20 08:00:00', '2025-04-18 08:00:00'],
       [8,  1,  'System Maintenance',      'Scheduled maintenance on Apr 30.',         'system',      0, null,         null,'admin',      null, '2025-04-01 10:00:00'],

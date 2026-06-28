@@ -7,6 +7,7 @@ import {
   adminGetReports, adminExportReports, adminGetReportTypes, adminGetDashboard, adminGetLogs, adminGetLogFilters, adminGetLogUsers,
   adminExportLogs, adminGetNotifications, adminCreateNotification,
   adminEditNotification, adminDeleteNotification,
+  adminGetStudentsWithAdvisor, adminGetAdvisors, adminAssignAdvisor,
 } from '../services/api';
 import { Alert } from '../components/shared';
 import { DashboardShell, Sidebar, Header } from '../components/layout';
@@ -19,19 +20,22 @@ import AdminEnrollmentsSection   from './admin/sections/AdminEnrollmentsSection'
 import AdminNotificationsSection from './admin/sections/AdminNotificationsSection';
 import AdminReportsSection       from './admin/sections/AdminReportsSection';
 import AdminLogsSection          from './admin/sections/AdminLogsSection';
+import AdminAdvisorAssignmentSection from './admin/sections/AdminAdvisorAssignmentSection';
 import {
   AdminUserModal, AdminCourseModal, AdminEnrollmentModal,
   AdminNotificationModal, AdminLogDetailModal,
 } from './admin/modals/AdminModals';
+import { AdminAdvisorAssignmentModal } from './admin/modals/AdminAdvisorAssignmentModal';
 
 const TAB_META = {
-  dashboard:     { eyebrow: 'Overview',  title: 'Dashboard',     icon: 'home' },
-  users:         { eyebrow: 'Accounts',  title: 'Users',         icon: 'users' },
-  courses:       { eyebrow: 'Catalogue', title: 'Courses',       icon: 'book' },
-  enrollments:   { eyebrow: 'Cohorts',   title: 'Enrollments',   icon: 'users' },
-  notifications: { eyebrow: 'Inbox',     title: 'Notifications', icon: 'notifications' },
-  reports:       { eyebrow: 'Analytics', title: 'Reports',       icon: 'progress' },
-  logs:          { eyebrow: 'Audit',     title: 'Activity Logs', icon: 'file' },
+  dashboard:     { eyebrow: 'Overview',    title: 'Dashboard',           icon: 'home' },
+  users:         { eyebrow: 'Accounts',    title: 'Users',               icon: 'users' },
+  courses:       { eyebrow: 'Catalogue',   title: 'Courses',             icon: 'book' },
+  enrollments:   { eyebrow: 'Cohorts',     title: 'Enrollments',         icon: 'users' },
+  advisorAssign: { eyebrow: 'Guidance',    title: 'Advisor Assignment',  icon: 'users' },
+  notifications: { eyebrow: 'Inbox',       title: 'Notifications',       icon: 'notifications' },
+  reports:       { eyebrow: 'Analytics',   title: 'Reports',             icon: 'progress' },
+  logs:          { eyebrow: 'Audit',      title: 'Activity Logs',       icon: 'file' },
 };
 
 export default function AdminDashboard() {
@@ -68,6 +72,13 @@ export default function AdminDashboard() {
   const [editingEnrollment, setEditingEnrollment]  = useState(null);
   const [detailLogs, setDetailLogs]               = useState([]);
   const [detailLogUsername, setDetailLogUsername] = useState('');
+
+  // advisor assignment data
+  const [advisorStudents, setAdvisorStudents] = useState([]);
+  const [advisors, setAdvisors]             = useState([]);
+  const [showAdvisorModal, setShowAdvisorModal] = useState(false);
+  const [assigningStudent, setAssigningStudent] = useState(null);
+  const [assignForm, setAssignForm]             = useState({ advisor_id: '' });
 
   const [logViewMode, setLogViewMode] = useState('user-list');
 
@@ -109,6 +120,14 @@ export default function AdminDashboard() {
       setUsers((await adminGetUsers()).data);
       setCourses((await adminGetCourses()).data);
     });
+    if (tab === 'advisorAssign') withLoading('advisorAssign', async () => {
+      const [stu, adv] = await Promise.all([
+        adminGetStudentsWithAdvisor(),
+        adminGetAdvisors(),
+      ]);
+      setAdvisorStudents(stu.data);
+      setAdvisors(adv.data);
+    });
     if (tab === 'notifications') withLoading('notifications', async () => {
       setNotifications((await adminGetNotifications()).data);
       setUsers((await adminGetUsers()).data);
@@ -149,12 +168,8 @@ export default function AdminDashboard() {
     setShowUserModal(true);
   };
   const saveUser = async () => {
-    try {
-      if (editingUser) { await adminEditUser(editingUser.user_id, userForm); showAlert('User updated'); }
-      else             { await adminAddUser(userForm); showAlert('User added'); }
-      setShowUserModal(false);
-      adminGetUsers().then(r => setUsers(r.data));
-    } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+    if (editingUser) { await adminEditUser(editingUser.user_id, userForm); showAlert('User updated'); setShowUserModal(false); adminGetUsers().then(r => setUsers(r.data)); }
+    else             { await adminAddUser(userForm); showAlert('User added'); setShowUserModal(false); adminGetUsers().then(r => setUsers(r.data)); }
   };
   const deactivateUser = async (id) => {
     if (!window.confirm('Deactivate this user?')) return;
@@ -216,6 +231,23 @@ export default function AdminDashboard() {
       setShowEnrollModal(false);
       adminGetEnrollments().then(r => setEnrollments(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
+
+  // advisor assignment
+  const openAssignAdvisor = (student) => {
+    setAssigningStudent(student);
+    setAssignForm({ advisor_id: student.advisor_id || '' });
+    setShowAdvisorModal(true);
+  };
+  const saveAdvisorAssignment = async () => {
+    try {
+      await adminAssignAdvisor(assigningStudent.user_id, assignForm.advisor_id || null);
+      showAlert('Advisor assignment saved');
+      setShowAdvisorModal(false);
+      adminGetStudentsWithAdvisor().then(r => setAdvisorStudents(r.data));
+    } catch (e) {
+      showAlert(e.response?.data?.message || 'Failed to assign advisor', 'error');
+    }
   };
 
   // notification CRUD
@@ -365,10 +397,11 @@ export default function AdminDashboard() {
     {
       label: 'Operate',
       items: [
-        { key: 'dashboard', label: 'Dashboard',     icon: 'home' },
-        { key: 'users',     label: 'Users',         icon: 'users' },
-        { key: 'courses',   label: 'Courses',       icon: 'book' },
-        { key: 'enrollments', label: 'Enrollments', icon: 'users' },
+        { key: 'dashboard', label: 'Dashboard',        icon: 'home' },
+        { key: 'users',     label: 'Users',            icon: 'users' },
+        { key: 'courses',   label: 'Courses',          icon: 'book' },
+        { key: 'enrollments', label: 'Enrollments',   icon: 'users' },
+        { key: 'advisorAssign', label: 'Advisor Assignment', icon: 'users' },
       ],
     },
     {
@@ -410,6 +443,7 @@ export default function AdminDashboard() {
       {tab === 'users'         && <AdminUsersSection         users={users} loading={loading.users} onAdd={openAddUser} onEdit={openEditUser} onDeactivate={deactivateUser} />}
       {tab === 'courses'       && <AdminCoursesSection       courses={courses} loading={loading.courses} onAdd={openAddCourse} onEdit={openEditCourse} onArchive={archiveCourse} />}
       {tab === 'enrollments'   && <AdminEnrollmentsSection   enrollments={enrollments} loading={loading.enrollments} onAdd={openAddEnroll} onEdit={openEditEnrollment} onDrop={dropEnrollment} />}
+      {tab === 'advisorAssign' && <AdminAdvisorAssignmentSection students={advisorStudents} loading={loading.advisorAssign} onAssign={openAssignAdvisor} />}
       {tab === 'notifications' && <AdminNotificationsSection notifications={notifications} loading={loading.notifications} onAdd={openAddNotif} onEdit={openEditNotif} onDelete={deleteNotif} />}
       {tab === 'reports'       && <AdminReportsSection
           reportTypes={reportTypes}
@@ -492,6 +526,17 @@ export default function AdminDashboard() {
           onChange={setNotifForm}
           onClose={() => setShowNotifModal(false)}
           onSubmit={saveNotif}
+        />
+      )}
+
+      {showAdvisorModal && (
+        <AdminAdvisorAssignmentModal
+          student={assigningStudent}
+          advisors={advisors}
+          assignForm={assignForm}
+          onChange={setAssignForm}
+          onClose={() => setShowAdvisorModal(false)}
+          onSubmit={saveAdvisorAssignment}
         />
       )}
 

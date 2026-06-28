@@ -86,7 +86,7 @@ exports.getMyStudents = async (req, res) => {
   const userId = req.user.user_id;
   try {
     const [students] = await db.execute(
-      `SELECT u.user_id, u.username, u.email, u.department, u.status,
+      `SELECT u.user_id, u.username, u.email, u.phone_number, u.department, u.status,
               sp.academic_level, sp.programme, sp.gpa, sp.is_at_risk,
               sp.learning_preferences,
               COUNT(DISTINCT e.course_id) AS enrolled_courses

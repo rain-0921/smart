@@ -173,7 +173,14 @@ export default function StudentDashboard() {
     try {
       await studentCompleteLesson(moduleId);
       showAlert('Lesson marked as complete!');
-      studentGetModules(selectedCourse.course_id).then(r => setModules(r.data));
+      const [modRes, dashRes, progRes] = await Promise.all([
+        studentGetModules(selectedCourse.course_id),
+        studentGetDashboard(),
+        studentGetProgress(),
+      ]);
+      setModules(modRes.data);
+      setDashboard(dashRes.data);
+      setProgressData(progRes.data);
     } catch { showAlert('Failed', 'error'); }
   };
 
@@ -227,9 +234,9 @@ export default function StudentDashboard() {
       const formData = new FormData();
       formData.append('file', assignmentFile);
       if (assignmentNote) formData.append('text_note', assignmentNote);
-      await studentSubmitAssignment(assignmentData.quiz.quiz_id, formData);
+      await studentSubmitAssignment(assignmentData.quiz_id, formData);
       showAlert('Assignment submitted successfully!');
-      const res = await studentGetAssignment(assignmentData.quiz.quiz_id);
+      const res = await studentGetAssignment(assignmentData.quiz_id);
       setAssignmentData(res.data);
       setAssignmentFile(null);
       setAssignmentNote('');

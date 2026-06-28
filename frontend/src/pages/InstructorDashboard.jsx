@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import {
@@ -9,7 +9,7 @@ import {
   instrGetCourses, instrCreateCourse, instrUpdateCourse, instrDeleteCourse,
   instrGetModules, instrCreateModule, instrUpdateModule, instrDeleteModule,
   instrCreateLesson, instrUpdateLesson, instrDeleteLesson,
-  instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrDeleteQuiz,
+  instrGetQuizzes, instrCreateQuiz, instrUpdateQuiz, instrPublishQuiz, instrDeleteQuiz,
   instrGetQuestions, instrAddQuestion, instrUpdateQuestion, instrDeleteQuestion,
   instrGetFeedback, instrAddFeedback, instrUpdateFeedback, instrDeleteFeedback,
   instrGetStudents, instrExportStudents, instrExportStudentsPdf, instrGetStudentDetail, instrGetPending, instrGradeSubmission,
@@ -77,7 +77,17 @@ export default function InstructorDashboard() {
   const blankCourse   = { title: '', description: '', status: 'draft' };
   const blankModule  = { title: '', description: '' };
   const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '', file: null };
-  const blankQuiz    = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', num_questions_per_attempt: '', status: 'draft' };
+  const toDatetimeLocal = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const defaultDueDate = () => {
+    const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    return d.toISOString().slice(0, 16);
+  };
+  const blankQuiz = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', num_questions_per_attempt: '', status: 'draft' };
   const blankQ       = { question_type: 'mcq', question_text: '', options: ['', '', '', ''], correct_answer: '', points: 1, improvement_tip: '' };
   const blankGrade   = { score: '', feedback: '' };
   const blankProfile = { username: '', phone_number: '', department: '', specialization: '', subjects_taught: '', office_hours: '' };
@@ -231,6 +241,14 @@ export default function InstructorDashboard() {
     } catch { showAlert('Failed', 'error'); }
   };
 
+  const publishQuiz = async (quiz) => {
+    try {
+      await instrPublishQuiz(quiz.quiz_id, { title: quiz.title, description: quiz.description || '', due_date: quiz.due_date || '', time_limit_minutes: quiz.time_limit_minutes || '', max_attempts: quiz.max_attempts || 1, randomize_questions: quiz.randomize_questions || false, submission_type: quiz.submission_type || 'online_quiz', num_questions_per_attempt: quiz.num_questions_per_attempt || '' });
+      showAlert(`"${quiz.title}" published — students have been notified.`);
+      instrGetQuizzes(selectedCourse.course_id).then(r => setQuizzes(r.data));
+    } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
+  };
+
   // QUESTION
   const saveQuestion = async () => {
     try {
@@ -318,9 +336,7 @@ export default function InstructorDashboard() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Failed to export PDF: ' + (err.response?.data?.message || err.message));
-    }
+    } catch (err) { showAlert('Failed to export PDF: ' + (err.response?.data?.message || err.message), 'error'); }
   };
 
   // FEEDBACK BAND
@@ -520,26 +536,28 @@ export default function InstructorDashboard() {
               No graded attempts in this range
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie
-                  data={analytics.scoreDistribution}
-                  dataKey="count"
-                  nameKey="bucket"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label={({ bucket, count }) => `${bucket}: ${count}`}
-                  labelLine={false}
-                >
-                  {analytics.scoreDistribution.map((entry, i) => (
-                    <Cell key={i} fill={['#B3261E', '#D97706', '#A9792C', '#1F7A4D', '#2454A6'][i]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${token.line}` }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-              </PieChart>
-            </ResponsiveContainer>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 4px' }}>
+              {(() => {
+                const total = analytics.scoreDistribution.reduce((a, b) => a + (b.count || 0), 0) || 1;
+                const colors = ['#B3261E', '#D97706', '#A9792C', '#1F7A4D', '#2454A6'];
+                return analytics.scoreDistribution.map((b, i) => {
+                  const pct = total > 0 ? Math.round(((b.count || 0) / total) * 100) : 0;
+                  const color = colors[i];
+                  return (
+                    <div key={b.bucket || i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                      <div style={{ width: 80, color: token.inkSoft, fontWeight: 600, flexShrink: 0 }}>{b.bucket}</div>
+                      <div style={{ flex: 1, background: token.line, borderRadius: 999, height: 10, overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, background: color, height: '100%', borderRadius: 999, transition: 'width 0.4s ease' }} />
+                      </div>
+                      <div style={{ width: 80, textAlign: 'right', color: token.ink, fontVariantNumeric: 'tabular-nums' }}>
+                        <span style={{ fontWeight: 700 }}>{b.count || 0}</span>
+                        <span style={{ color: token.inkFaint, marginLeft: 6 }}>{pct}%</span>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           )}
         </div>
 
@@ -622,9 +640,10 @@ export default function InstructorDashboard() {
           onDeleteModule={deleteModule}
           onDeleteLesson={deleteLesson}
           onAddQuiz={() => { setEditingQuiz(null); setQuizForm(blankQuiz); setShowQuizModal(true); }}
-          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: q.due_date || '', time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', num_questions_per_attempt: q.num_questions_per_attempt || '', status: q.status || 'draft' }); setShowQuizModal(true); }}
+          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: toDatetimeLocal(q.due_date), time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', num_questions_per_attempt: q.num_questions_per_attempt || '', accepted_file_types: q.accepted_file_types || '', status: q.status || 'draft' }); setShowQuizModal(true); }}
           onDeleteQuiz={deleteQuiz}
           onToggleQuiz={(q) => selectedQuiz?.quiz_id === q.quiz_id ? setSelectedQuiz(null) : openQuiz(q)}
+          onPublishQuiz={publishQuiz}
           onAddQuestion={() => { setEditingQuestionId(null); setQForm(blankQ); setShowQModal(true); }}
           onEditQuestion={openEditQuestion}
           onDeleteQuestion={deleteQuestion}
