@@ -282,7 +282,7 @@ exports.createLesson = async (req, res) => {
     await db.execute(
       `INSERT INTO lesson (module_id, title, content_type, content_url, content_text,
        sort_order, duration_minutes, status)
-       VALUES (?,?,?,?,?,?,'published')`,
+       VALUES (?,?,?,?,?,?,?,'published')`,
       [moduleId, title, resolvedContentType, resolvedContentUrl, resolvedContentText,
        maxOrder+1, duration_minutes||null]
     );
