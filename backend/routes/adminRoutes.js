@@ -6,6 +6,9 @@ const admin = require('../controllers/adminController');
 // All admin routes are protected
 router.use(protect, authorize('admin'));
 
+// Departments
+router.get('/departments', admin.getDepartments);
+
 // Dashboard
 router.get('/dashboard',                  admin.getDashboard);
 

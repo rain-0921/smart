@@ -33,12 +33,12 @@ export default function AdminLogsSection({
         </div>
         <div>
           <label style={{ ...formLabel, marginBottom: 3 }}>From</label>
-          <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={filterStart}
+          <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={filterStart} max={new Date().toISOString().slice(0, 10)}
             onChange={e => onChangeStart(e.target.value)} />
         </div>
         <div>
           <label style={{ ...formLabel, marginBottom: 3 }}>To</label>
-          <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={filterEnd}
+          <input className="adm-input" style={{ ...formInput, width: 145 }} type="date" value={filterEnd} max={new Date().toISOString().slice(0, 10)}
             onChange={e => onChangeEnd(e.target.value)} />
         </div>
         <button className="adm-btn" style={{ background: token.indigo, color: '#fff', border: 'none', borderRadius: 8, padding: '10px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, height: 40 }} onClick={onApply}>Filter</button>

@@ -144,11 +144,28 @@ exports.enrollCourse = async (req, res) => {
   const { course_id } = req.body;
   try {
     const [existing] = await db.execute(
-      'SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=?',
+      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status IN ('active','completed')",
       [userId, course_id]
     );
     if (existing.length > 0) {
       return res.status(400).json({ message: 'You are already enrolled in this course' });
+    }
+    // Reactivate a dropped record instead of creating a new one
+    const [dropped] = await db.execute(
+      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status='dropped'",
+      [userId, course_id]
+    );
+    if (dropped.length > 0) {
+      await db.execute(
+        "UPDATE enrollment SET status='active' WHERE enrollment_id=?",
+        [dropped[0].enrollment_id]
+      );
+      await db.execute(
+        `INSERT INTO activity_log (user_id, activity_type, description, related_item_type, related_item_id)
+         VALUES (?, 'enroll', 'Student re-enrolled in a dropped course', 'course', ?)`,
+        [userId, course_id]
+      );
+      return res.status(201).json({ message: 'Re-enrolled successfully' });
     }
     await db.execute(
       "INSERT INTO enrollment (user_id, course_id, status) VALUES (?, ?, 'active')",

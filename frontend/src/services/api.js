@@ -28,6 +28,7 @@ export const adminGetUsers       = ()       => API.get('/admin/users');
 export const adminAddUser        = (data)   => API.post('/admin/users', data);
 export const adminEditUser       = (id, data) => API.put(`/admin/users/${id}`, data);
 export const adminDeactivateUser = (id)     => API.patch(`/admin/users/${id}/deactivate`);
+export const adminGetDepartments = ()       => API.get('/admin/departments');
 
 // Admin - Courses
 export const adminGetCourses     = ()       => API.get('/admin/courses');
