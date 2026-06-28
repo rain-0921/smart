@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API = axios.create({ baseURL: 'http://localhost:5000/api' });
+const BASE_URL = 'http://localhost:5000';
+const API = axios.create({ baseURL: `${BASE_URL}/api` });
+
+export { BASE_URL };
+
+/** Prepends BASE_URL if the path is a relative upload path (starts with /uploads/). */
+export const photoUrl = (path) => {
+  if (!path) return null;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+};
 
 API.interceptors.request.use((req) => {
   const token = localStorage.getItem('token');
@@ -28,16 +38,29 @@ export const adminArchiveCourse  = (id)     => API.patch(`/admin/courses/${id}/a
 // Admin - Enrollments
 export const adminGetEnrollments = ()       => API.get('/admin/enrollments');
 export const adminAddEnrollment  = (data)   => API.post('/admin/enrollments', data);
+export const adminEditEnrollment = (id, data) => API.put(`/admin/enrollments/${id}`, data);
 export const adminDropEnrollment = (id)     => API.patch(`/admin/enrollments/${id}/drop`);
 
 // Admin - Reports & Logs
-export const adminGetReports     = ()       => API.get('/admin/reports');
-export const adminGetLogs        = ()       => API.get('/admin/activity-logs');
+export const adminGetReports     = (params) => API.get('/admin/reports', { params });
+export const adminExportReports  = (params) => API.get('/admin/reports/export', { params, responseType: 'blob' });
+export const adminGetReportTypes = ()       => API.get('/admin/reports/types');
+export const adminGetDashboard   = ()       => API.get('/admin/dashboard');
+export const adminGetLogs        = (params) => API.get('/admin/activity-logs', { params });
+export const adminGetLogFilters  = ()       => API.get('/admin/activity-logs/filters');
+export const adminGetLogUsers    = ()       => API.get('/admin/activity-logs/users');
+export const adminExportLogs     = (params) => API.get('/admin/activity-logs/export', { params });
+
+// Admin - Notifications
+export const adminGetNotifications    = ()       => API.get('/admin/notifications');
+export const adminCreateNotification  = (data)  => API.post('/admin/notifications', data);
+export const adminEditNotification    = (id, data) => API.put(`/admin/notifications/${id}`, data);
+export const adminDeleteNotification  = (id)    => API.delete(`/admin/notifications/${id}`);
 
 // Student
 export const studentGetDashboard    = ()           => API.get('/student/dashboard');
 export const studentGetProfile      = ()           => API.get('/student/profile');
-export const studentUpdateProfile   = (data)       => API.put('/student/profile', data);
+export const studentUpdateProfile   = (data)       => API.put('/student/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const studentGetCourses      = ()           => API.get('/student/courses');
 export const studentEnroll          = (data)       => API.post('/student/courses/enroll', data);
 export const studentGetModules      = (courseId)   => API.get(`/student/courses/${courseId}/modules`);
@@ -45,13 +68,21 @@ export const studentCompleteLesson  = (moduleId)   => API.post(`/student/modules
 export const studentGetQuizzes      = (courseId)   => API.get(`/student/courses/${courseId}/quizzes`);
 export const studentStartQuiz       = (quizId)     => API.post(`/student/quizzes/${quizId}/start`);
 export const studentSubmitQuiz      = (attemptId, data) => API.post(`/student/attempts/${attemptId}/submit`, data);
+export const studentGetAssignment   = (quizId)     => API.get(`/student/assignments/${quizId}`);
+export const studentSubmitAssignment= (quizId, formData) =>
+  API.post(`/student/assignments/${quizId}/submit`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
 export const studentGetGrades       = (courseId)   => API.get(`/student/courses/${courseId}/grades`);
 export const studentGetNotifications= ()           => API.get('/student/notifications');
 export const studentMarkRead        = (id)         => API.patch(`/student/notifications/${id}/read`);
+export const studentGetProgress    = ()           => API.get('/student/progress');
+export const studentGetGradeDetail = (attemptId)  => API.get(`/student/attempts/${attemptId}/detail`);
+export const studentLogActivity    = (data)       => API.post('/student/log-activity', data);
 // Instructor
 export const instrGetDashboard      = ()             => API.get('/instructor/dashboard');
 export const instrGetProfile        = ()             => API.get('/instructor/profile');
-export const instrUpdateProfile     = (data)         => API.put('/instructor/profile', data);
+export const instrUpdateProfile     = (data)         => API.put('/instructor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const instrGetCourses        = ()             => API.get('/instructor/courses');
 export const instrCreateCourse      = (data)         => API.post('/instructor/courses', data);
 export const instrUpdateCourse      = (id, data)     => API.put(`/instructor/courses/${id}`, data);
@@ -67,23 +98,31 @@ export const instrUpdateQuiz        = (quizId, data) => API.put(`/instructor/qui
 export const instrDeleteQuiz        = (quizId)       => API.delete(`/instructor/quizzes/${quizId}`);
 export const instrGetQuestions      = (quizId)       => API.get(`/instructor/quizzes/${quizId}/questions`);
 export const instrAddQuestion       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/questions`, data);
+export const instrUpdateQuestion    = (questionId, data) => API.put(`/instructor/questions/${questionId}`, data);
 export const instrDeleteQuestion    = (questionId)   => API.delete(`/instructor/questions/${questionId}`);
+export const instrGetFeedback       = (quizId)       => API.get(`/instructor/quizzes/${quizId}/feedback`);
+export const instrAddFeedback       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/feedback`, data);
+export const instrUpdateFeedback    = (feedbackId, data) => API.put(`/instructor/feedback/${feedbackId}`, data);
+export const instrDeleteFeedback    = (feedbackId)   => API.delete(`/instructor/feedback/${feedbackId}`);
 export const instrGetStudents       = (courseId)     => API.get(`/instructor/courses/${courseId}/students`);
+export const instrExportStudents    = (courseId)     => API.get(`/instructor/courses/${courseId}/students/export`, { responseType: 'blob' });
+export const instrGetStudentDetail  = (studentId)    => API.get(`/instructor/students/${studentId}`);
 export const instrGetPending        = ()             => API.get('/instructor/submissions/pending');
 export const instrGradeSubmission   = (attemptId, data) => API.patch(`/instructor/submissions/${attemptId}/grade`, data);
-export const instrGetAnalytics      = (courseId)     => API.get(`/instructor/courses/${courseId}/analytics`);
+export const instrGetAnalytics      = (courseId, params = {}) => API.get(`/instructor/courses/${courseId}/analytics`, { params });
 export const instrGetNotifications  = ()             => API.get('/instructor/notifications');
 export const instrMarkRead          = (id)           => API.patch(`/instructor/notifications/${id}/read`);
 
 // Advisor
 export const advisorGetDashboard     = ()           => API.get('/advisor/dashboard');
 export const advisorGetProfile       = ()           => API.get('/advisor/profile');
-export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data);
+export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
 export const advisorGetStudents      = ()           => API.get('/advisor/students');
 export const advisorGetStudent       = (id)         => API.get(`/advisor/students/${id}`);
 export const advisorGetGrades        = (id)         => API.get(`/advisor/students/${id}/grades`);
 export const advisorGetProgress      = ()           => API.get('/advisor/progress');
 export const advisorGetReport        = (type)       => API.get(`/advisor/reports?type=${type}`);
+export const advisorExportReport     = (type)       => API.get(`/advisor/reports/export?type=${type}`, { responseType: 'blob' });
 export const advisorGetNotifications = ()           => API.get('/advisor/notifications');
 export const advisorMarkRead         = (id)         => API.patch(`/advisor/notifications/${id}/read`);
 

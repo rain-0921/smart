@@ -1,4 +1,16 @@
 const db = require('../config/db');
+const { inferContentType } = require('../middleware/materialUpload');
+
+// ─── HELPER ─────────────────────────────────────────────
+// Returns user_id[] for all students actively enrolled in a course.
+// Used by updateCourse and updateQuiz to fan-out notifications on publish.
+async function getActiveEnrolledStudents(courseId) {
+  const [rows] = await db.execute(
+    `SELECT user_id FROM enrollment WHERE course_id=? AND status='active'`,
+    [courseId]
+  );
+  return rows.map(r => r.user_id);
+}
 
 // ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
@@ -56,11 +68,24 @@ exports.updateProfile = async (req, res) => {
   const userId = req.user.user_id;
   const { username, phone_number, department, specialization, subjects_taught, office_hours } = req.body;
   if (!username) return res.status(400).json({ message: 'Username is required' });
+
+  // req.file is set by the `handlePhotoUpload` multer middleware in instructorRoutes.js.
+  // Format (JPG/PNG) and size (<=5MB) are already validated there per SDS 7.2.2.
+  const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
+
   try {
-    await db.execute(
-      `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
-      [username, phone_number||null, department||null, userId]
-    );
+    if (photo_url) {
+      await db.execute(
+        `UPDATE user SET username=?, phone_number=?, department=?, photo_url=? WHERE user_id=?`,
+        [username, phone_number||null, department||null, photo_url, userId]
+      );
+    } else {
+      // No new photo uploaded — leave the existing photo_url untouched.
+      await db.execute(
+        `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
+        [username, phone_number||null, department||null, userId]
+      );
+    }
     await db.execute(
       `UPDATE instructor_profile SET specialization=?, subjects_taught=?, office_hours=?
        WHERE user_id=?`,
@@ -70,7 +95,7 @@ exports.updateProfile = async (req, res) => {
       `INSERT INTO activity_log (user_id, activity_type, description)
        VALUES (?, 'profile_update', 'Instructor updated their profile')`, [userId]
     );
-    res.json({ message: 'Profile updated successfully' });
+    res.json({ message: 'Profile updated successfully', photo_url: photo_url || undefined });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -121,6 +146,12 @@ exports.updateCourse = async (req, res) => {
   const { title, description, status } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
+    // Grab current status first so we know whether this is a draft -> published transition
+    const [[existing]] = await db.execute(
+      `SELECT status FROM course WHERE course_id=? AND instructor_id=?`, [id, userId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Course not found' });
+
     // Check course has lessons before publishing
     if (status === 'published') {
       const [[{ lessonCount }]] = await db.execute(
@@ -135,6 +166,25 @@ exports.updateCourse = async (req, res) => {
       `UPDATE course SET title=?, description=?, status=? WHERE course_id=? AND instructor_id=?`,
       [title, description||null, status, id, userId]
     );
+
+    // ── FIX: notify enrolled students when course transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `Course Published: ${title}`,
+               `The course "${title}" has been published and is now available.`,
+               'course_published', 'course', id]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Course updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -206,20 +256,41 @@ exports.deleteModule = async (req, res) => {
 exports.createLesson = async (req, res) => {
   const { moduleId } = req.params;
   const { title, content_type, content_url, content_text, duration_minutes } = req.body;
-  if (!title || !content_type)
-    return res.status(400).json({ message: 'Title and content type are required' });
+  if (!title)
+    return res.status(400).json({ message: 'Title is required' });
+
   try {
+    // If the request carries an uploaded file (multipart/form-data from the
+    // handleMaterialUpload middleware), store it on disk and infer the
+    // content_type from its mimetype. Otherwise fall back to the caller-supplied
+    // content_type/content_url pair (e.g. YouTube link or external URL).
+    let resolvedContentType = content_type;
+    let resolvedContentUrl  = content_url || null;
+    let resolvedContentText = content_text || null;
+
+    if (req.file) {
+      resolvedContentType = inferContentType(req.file.mimetype);
+      resolvedContentUrl  = `/uploads/lessons/${req.file.filename}`;
+    }
+
+    if (!resolvedContentType)
+      return res.status(400).json({ message: 'content_type is required when no file is uploaded' });
+
     const [[{ maxOrder }]] = await db.execute(
       `SELECT COALESCE(MAX(sort_order),0) AS maxOrder FROM lesson WHERE module_id=?`, [moduleId]
     );
     await db.execute(
       `INSERT INTO lesson (module_id, title, content_type, content_url, content_text,
        sort_order, duration_minutes, status)
-       VALUES (?,?,?,?,?,?,'published')`,
-      [moduleId, title, content_type, content_url||null, content_text||null,
+       VALUES (?,?,?,?,?,?,?,'published')`,
+      [moduleId, title, resolvedContentType, resolvedContentUrl, resolvedContentText,
        maxOrder+1, duration_minutes||null]
     );
-    res.status(201).json({ message: 'Lesson created' });
+    res.status(201).json({
+      message: 'Lesson created',
+      content_type: resolvedContentType,
+      content_url: resolvedContentUrl
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -259,15 +330,18 @@ exports.createQuiz = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, submission_type } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt } = req.body;
   if (!title) return res.status(400).json({ message: 'Title is required' });
   try {
     const [result] = await db.execute(
       `INSERT INTO quiz (course_id, created_by, title, description, due_date,
-       time_limit_minutes, max_attempts, randomize_questions, submission_type, status)
-       VALUES (?,?,?,?,?,?,?,?,?,'draft')`,
+       time_limit_minutes, max_attempts, randomize_questions, submission_type,
+       num_questions_per_attempt, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,'draft')`,
       [courseId, userId, title, description||null, due_date||null,
-       time_limit_minutes||null, max_attempts||1, randomize_questions||false, submission_type||'online_quiz']
+       time_limit_minutes||null, max_attempts||1, randomize_questions||false,
+       submission_type||'online_quiz', num_questions_per_attempt||null]
     );
     res.status(201).json({ message: 'Quiz created', quiz_id: result.insertId });
   } catch (error) {
@@ -278,8 +352,15 @@ exports.createQuiz = async (req, res) => {
 exports.updateQuiz = async (req, res) => {
   const { quizId } = req.params;
   const { title, description, due_date, time_limit_minutes,
-          max_attempts, randomize_questions, status } = req.body;
+          max_attempts, randomize_questions, submission_type,
+          num_questions_per_attempt, status } = req.body;
   try {
+    // Grab current status + course_id before update (needed for publish check + notify)
+    const [[existing]] = await db.execute(
+      `SELECT status, course_id FROM quiz WHERE quiz_id=?`, [quizId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Quiz not found' });
+
     // Check has questions before publishing
     if (status === 'published') {
       const [[{ qCount }]] = await db.execute(
@@ -290,10 +371,31 @@ exports.updateQuiz = async (req, res) => {
     }
     await db.execute(
       `UPDATE quiz SET title=?, description=?, due_date=?, time_limit_minutes=?,
-       max_attempts=?, randomize_questions=?, status=? WHERE quiz_id=?`,
+       max_attempts=?, randomize_questions=?, submission_type=?,
+       num_questions_per_attempt=?, status=? WHERE quiz_id=?`,
       [title, description||null, due_date||null, time_limit_minutes||null,
-       max_attempts||1, randomize_questions||false, status, quizId]
+       max_attempts||1, randomize_questions||false, submission_type||'online_quiz',
+       num_questions_per_attempt||null, status, quizId]
     );
+
+    // ── FIX: notify enrolled students when quiz transitions to 'published' ──
+    if (status === 'published' && existing.status !== 'published') {
+      const studentIds = await getActiveEnrolledStudents(existing.course_id);
+      if (studentIds.length > 0) {
+        await Promise.all(
+          studentIds.map(uid =>
+            db.execute(
+              `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [uid, `New Quiz Available: ${title}`,
+               `A new quiz "${title}" has been published in your course.`,
+               'quiz_published', 'quiz', quizId]
+            )
+          )
+        );
+      }
+    }
+
     res.json({ message: 'Quiz updated' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -356,6 +458,126 @@ exports.deleteQuestion = async (req, res) => {
   }
 };
 
+// Update an existing question — used to revise the per-question
+// improvement_tip (or any other field) after the quiz has been published.
+// Spec UC2.4.6 caps feedback text at 500 characters per question.
+exports.updateQuestion = async (req, res) => {
+  const { questionId } = req.params;
+  const { question_type, question_text, options, correct_answer, points, improvement_tip, sort_order } = req.body;
+  try {
+    const [[existing]] = await db.execute(
+      `SELECT q.question_id, COUNT(qa.quiz_attempt_id) AS attempt_count
+       FROM question q
+       LEFT JOIN answer a ON a.question_id = q.question_id
+       LEFT JOIN quiz_attempt qa ON qa.quiz_attempt_id = a.quiz_attempt_id
+       WHERE q.question_id=? GROUP BY q.question_id`, [questionId]
+    );
+    if (!existing) return res.status(404).json({ message: 'Question not found' });
+
+    if (improvement_tip && String(improvement_tip).length > 500) {
+      return res.status(400).json({ message: 'Improvement tip must not exceed 500 characters' });
+    }
+
+    await db.execute(
+      `UPDATE question SET
+        question_type = COALESCE(?, question_type),
+        question_text = COALESCE(?, question_text),
+        options       = COALESCE(?, options),
+        correct_answer= COALESCE(?, correct_answer),
+        points        = COALESCE(?, points),
+        improvement_tip = ?,
+        sort_order    = COALESCE(?, sort_order)
+       WHERE question_id = ?`,
+      [
+        question_type || null,
+        question_text || null,
+        options ? JSON.stringify(options) : null,
+        correct_answer || null,
+        points ?? null,
+        improvement_tip || null,
+        sort_order ?? null,
+        questionId
+      ]
+    );
+    res.json({
+      message: 'Question updated',
+      attempted_already: existing.attempt_count > 0
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// ─── QUIZ FEEDBACK (score-band messages) ─────────────────
+exports.getQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  try {
+    const [feedback] = await db.execute(
+      `SELECT quiz_feedback_id, quiz_id, min_score, max_score, feedback_message
+       FROM quiz_feedback WHERE quiz_id=? ORDER BY min_score ASC`, [quizId]
+    );
+    // Warn the instructor if the quiz has already been attempted
+    const [[{ attemptCount }]] = await db.execute(
+      `SELECT COUNT(*) AS attemptCount FROM quiz_attempt WHERE quiz_id=?`, [quizId]
+    );
+    res.json({ feedback, alreadyAttempted: attemptCount > 0 });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.addQuizFeedback = async (req, res) => {
+  const { quizId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    const [result] = await db.execute(
+      `INSERT INTO quiz_feedback (quiz_id, min_score, max_score, feedback_message)
+       VALUES (?,?,?,?)`,
+      [quizId, min_score, max_score, feedback_message]
+    );
+    res.status(201).json({ message: 'Feedback band added', quiz_feedback_id: result.insertId });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.updateQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  const { min_score, max_score, feedback_message } = req.body;
+  if (min_score === undefined || max_score === undefined || !feedback_message)
+    return res.status(400).json({ message: 'Min score, max score and message are required' });
+  if (Number(min_score) > Number(max_score))
+    return res.status(400).json({ message: 'Min score cannot be greater than max score' });
+  if (feedback_message.length > 500)
+    return res.status(400).json({ message: 'Feedback message must not exceed 500 characters' });
+  try {
+    await db.execute(
+      `UPDATE quiz_feedback SET min_score=?, max_score=?, feedback_message=?
+       WHERE quiz_feedback_id=?`,
+      [min_score, max_score, feedback_message, feedbackId]
+    );
+    res.json({ message: 'Feedback band updated' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+exports.deleteQuizFeedback = async (req, res) => {
+  const { feedbackId } = req.params;
+  try {
+    await db.execute(`DELETE FROM quiz_feedback WHERE quiz_feedback_id=?`, [feedbackId]);
+    res.json({ message: 'Feedback band deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
 // ─── STUDENT PROGRESS ────────────────────────────────────
 exports.getCourseStudents = async (req, res) => {
   const { courseId } = req.params;
@@ -380,6 +602,120 @@ exports.getCourseStudents = async (req, res) => {
   }
 };
 
+// Per-student drill-down: returns profile, courses with completion, full quiz
+// attempt history, and assignment submissions. Authorization: the student must
+// be enrolled in at least one of the requesting instructor's courses.
+exports.getStudentDetail = async (req, res) => {
+  const userId = req.user.user_id;
+  const { studentId } = req.params;
+  try {
+    const [ownedRows] = await db.execute(
+      `SELECT 1 FROM enrollment e
+       JOIN course c ON e.course_id = c.course_id
+       WHERE c.instructor_id = ? AND e.user_id = ?
+       LIMIT 1`, [userId, studentId]
+    );
+    if (ownedRows.length === 0) {
+      return res.status(403).json({ message: 'This student is not enrolled in any of your courses' });
+    }
+
+    const [[profile]] = await db.execute(
+      `SELECT u.user_id, u.username, u.email, u.photo_url,
+              sp.programme, sp.academic_level, sp.gpa, sp.is_at_risk,
+              sp.learning_preferences
+       FROM user u
+       LEFT JOIN student_profile sp ON u.user_id = sp.user_id
+       WHERE u.user_id = ?`, [studentId]
+    );
+
+    const [courses] = await db.execute(
+      `SELECT c.course_id, c.title, c.status, e.completion_percent,
+              e.enrolled_at, e.status AS enrollment_status
+       FROM enrollment e
+       JOIN course c ON c.course_id = e.course_id
+       WHERE e.user_id = ? AND c.instructor_id = ?
+       ORDER BY e.enrolled_at DESC`, [studentId, userId]
+    );
+
+    const [quizAttempts] = await db.execute(
+      `SELECT qa.quiz_attempt_id, qa.quiz_id, qa.status, qa.score,
+              qa.created_at, qa.end_time, q.title AS quiz_title,
+              q.submission_type, c.title AS course_title
+       FROM quiz_attempt qa
+       JOIN quiz q ON qa.quiz_id = q.quiz_id
+       JOIN course c ON q.course_id = c.course_id
+       WHERE qa.user_id = ? AND c.instructor_id = ?
+       ORDER BY qa.created_at DESC`, [studentId, userId]
+    );
+
+    const [submissions] = await db.execute(
+      `SELECT a.answer_id, a.file_url, a.user_answer, a.score_awarded,
+              a.feedback, a.created_at, q.title AS quiz_title,
+              qa.status, q.submission_type, c.title AS course_title
+       FROM answer a
+       JOIN quiz_attempt qa ON qa.quiz_attempt_id = a.quiz_attempt_id
+       JOIN quiz q ON q.quiz_id = qa.quiz_id
+       JOIN course c ON c.course_id = q.course_id
+       WHERE qa.user_id = ? AND c.instructor_id = ?
+         AND (a.file_url IS NOT NULL OR q.submission_type IN ('file_upload','mixed'))
+       ORDER BY a.created_at DESC`, [studentId, userId]
+    );
+
+    res.json({ profile, courses, quizAttempts, submissions });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Stream the enrolled-students list for a course as a CSV file. Spec UC2.4.8
+// requires the instructor be able to export the report as PDF or CSV.
+exports.exportCourseStudents = async (req, res) => {
+  const { courseId } = req.params;
+  try {
+    const [students] = await db.execute(
+      `SELECT u.username, u.email,
+              e.status AS enrollment_status,
+              ROUND(e.completion_percent, 2) AS completion_percent,
+              e.enrolled_at,
+              sp.gpa,
+              sp.is_at_risk,
+              COUNT(DISTINCT qa.quiz_attempt_id) AS quizzes_taken,
+              ROUND(COALESCE(AVG(qa.score),0), 2) AS avg_score
+       FROM enrollment e
+       JOIN user u ON e.user_id = u.user_id
+       LEFT JOIN student_profile sp ON u.user_id = sp.user_id
+       LEFT JOIN quiz_attempt qa ON qa.user_id = u.user_id
+       WHERE e.course_id = ? AND e.status = 'active'
+       GROUP BY u.user_id
+       ORDER BY avg_score ASC`, [courseId]
+    );
+
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'No students to export' });
+    }
+
+    const headers = ['username', 'email', 'enrollment_status', 'completion_percent', 'enrolled_at', 'gpa', 'is_at_risk', 'quizzes_taken', 'avg_score'];
+    const lines = [headers.join(',')];
+    for (const s of students) {
+      lines.push(headers.map(h => toCsvValue(s[h])).join(','));
+    }
+    const csv = lines.join('\r\n');
+    const filename = `course_${courseId}_students_${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// RFC 4180 CSV field escape. Duplicated locally so this controller is self-contained.
+function toCsvValue(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 // ─── GRADE ASSIGNMENTS ───────────────────────────────────
 exports.getPendingSubmissions = async (req, res) => {
   const userId = req.user.user_id;
@@ -387,11 +723,13 @@ exports.getPendingSubmissions = async (req, res) => {
     const [submissions] = await db.execute(
       `SELECT qa.quiz_attempt_id, qa.status, qa.created_at, qa.score,
               u.username AS student_name, u.email AS student_email,
-              q.title AS quiz_title, c.title AS course_title
+              q.title AS quiz_title, q.submission_type, c.title AS course_title,
+              a.file_url, a.user_answer AS text_note
        FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
        JOIN user u ON qa.user_id = u.user_id
+       LEFT JOIN answer a ON a.quiz_attempt_id = qa.quiz_attempt_id AND a.file_url IS NOT NULL
        WHERE q.created_by=? AND qa.status IN ('submitted','in_progress')
        ORDER BY qa.created_at ASC`, [userId]
     );
@@ -435,34 +773,110 @@ exports.gradeSubmission = async (req, res) => {
 };
 
 // ─── ANALYTICS ───────────────────────────────────────────
+// Accepts optional ?from=YYYY-MM-DD&to=YYYY-MM-DD to scope all metrics.
+// Returns quizStats (avg score per quiz), enrollmentTrend (daily counts),
+// scoreDistribution (5 buckets), submissionRate (submitted/active),
+// and basic completed/total enrollment counts.
 exports.getAnalytics = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
+  const { from, to } = req.query;
+
+  // Build a date range predicate when both endpoints provided.
+  const range = [];
+  let rangeClause = '';
+  if (from && to) {
+    range.push(from, to);
+    rangeClause = 'AND DATE(qa.created_at) BETWEEN ? AND ?';
+  } else if (from) {
+    range.push(from);
+    rangeClause = 'AND DATE(qa.created_at) >= ?';
+  } else if (to) {
+    range.push(to);
+    rangeClause = 'AND DATE(qa.created_at) <= ?';
+  }
+
+  const enrRange = [];
+  let enrRangeClause = '';
+  if (from && to) { enrRange.push(from, to); enrRangeClause = 'AND DATE(enrolled_at) BETWEEN ? AND ?'; }
+  else if (from) { enrRange.push(from); enrRangeClause = 'AND DATE(enrolled_at) >= ?'; }
+  else if (to) { enrRange.push(to); enrRangeClause = 'AND DATE(enrolled_at) <= ?'; }
+
   try {
-    // Average score per quiz
+    // Average score per quiz, scoped to the date range.
     const [quizStats] = await db.execute(
       `SELECT q.title, COALESCE(AVG(qa.score),0) AS avg_score,
               COUNT(qa.quiz_attempt_id) AS attempts
        FROM quiz q
-       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id AND qa.status='graded'
+       LEFT JOIN quiz_attempt qa ON qa.quiz_id = q.quiz_id
+                                AND qa.status='graded'
+                                ${rangeClause ? rangeClause.replace('qa.created_at', 'qa.created_at') : ''}
        WHERE q.course_id=? AND q.created_by=?
-       GROUP BY q.quiz_id`, [courseId, userId]
+       GROUP BY q.quiz_id`, [...range, courseId, userId]
     );
-    // Enrollment over time
+
+    // Daily enrollment counts (last 30 within the range).
     const [enrollmentTrend] = await db.execute(
       `SELECT DATE(enrolled_at) AS date, COUNT(*) AS count
-       FROM enrollment WHERE course_id=?
+       FROM enrollment WHERE course_id=? ${enrRangeClause}
        GROUP BY DATE(enrolled_at)
-       ORDER BY date ASC LIMIT 30`, [courseId]
+       ORDER BY date ASC LIMIT 30`, [courseId, ...enrRange]
     );
-    // Completion stats
+
+    // Score distribution: bucket graded attempts into 5 ranges.
+    const [scoreDistribution] = await db.execute(
+      `SELECT
+         SUM(CASE WHEN score < 50 THEN 1 ELSE 0 END) AS '0_49',
+         SUM(CASE WHEN score >= 50 AND score < 60 THEN 1 ELSE 0 END) AS '50_59',
+         SUM(CASE WHEN score >= 60 AND score < 70 THEN 1 ELSE 0 END) AS '60_69',
+         SUM(CASE WHEN score >= 70 AND score < 80 THEN 1 ELSE 0 END) AS '70_79',
+         SUM(CASE WHEN score >= 80 THEN 1 ELSE 0 END) AS '80_100',
+         COUNT(*) AS total
+       FROM quiz_attempt qa
+       JOIN quiz q ON q.quiz_id = qa.quiz_id
+       WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}`,
+      [...range, courseId, userId]
+    );
+
+    // Submission rate: percentage of active enrollments that have at least
+    // one graded attempt.
+    const [[submissionRate]] = await db.execute(
+      `SELECT
+         (SELECT COUNT(*) FROM enrollment WHERE course_id=? AND status='active') AS active_count,
+         (SELECT COUNT(DISTINCT qa.user_id) FROM quiz_attempt qa
+          JOIN quiz q ON q.quiz_id = qa.quiz_id
+          WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}) AS submitted_count`,
+      [courseId, courseId, userId, ...range]
+    );
+
+    // Completion stats (not date-filtered — enrollment completion is cumulative).
     const [[{ completed, total }]] = await db.execute(
       `SELECT
          SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
          COUNT(*) AS total
        FROM enrollment WHERE course_id=?`, [courseId]
     );
-    res.json({ quizStats, enrollmentTrend, completed: completed||0, total: total||0 });
+
+    const dist = scoreDistribution[0] || { '0_49': 0, '50_59': 0, '60_69': 0, '70_79': 0, '80_100': 0, total: 0 };
+    const submissionRatePct = submissionRate.active_count > 0
+      ? Math.round((submissionRate.submitted_count / submissionRate.active_count) * 100)
+      : 0;
+
+    res.json({
+      quizStats,
+      enrollmentTrend,
+      scoreDistribution: [
+        { bucket: '0–49%',  count: Number(dist['0_49']  || 0) },
+        { bucket: '50–59%', count: Number(dist['50_59'] || 0) },
+        { bucket: '60–69%', count: Number(dist['60_69'] || 0) },
+        { bucket: '70–79%', count: Number(dist['70_79'] || 0) },
+        { bucket: '80–100%',count: Number(dist['80_100']|| 0) }
+      ],
+      submissionRate: { submitted: submissionRate.submitted_count, active: submissionRate.active_count, pct: submissionRatePct },
+      completed: completed || 0,
+      total: total || 0,
+      range: { from: from || null, to: to || null }
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
