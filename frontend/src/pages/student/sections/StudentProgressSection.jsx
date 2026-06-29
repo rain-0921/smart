@@ -38,8 +38,8 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
           <div style={sectionTitle}>Recommended Next Steps</div>
           <div style={card}>
             {progressData.recommendations.map((r, i) => (
-              <div key={i} style={{ ...quizItem, cursor: r.type === 'module' ? 'pointer' : 'default' }}
-                onClick={() => r.type === 'module' && onGotoLessons()}>
+              <div key={i} style={{ ...quizItem, cursor: r.type === 'module' ? 'pointer' : 'pointer' }}
+                onClick={() => onGotoLessons(r)}>
                 <div style={{ ...quizIcon, background: r.type === 'quiz' ? 'rgba(167,139,250,0.12)' : 'rgba(52,211,153,0.12)' }}>
                   {r.type === 'quiz' ? '✎' : '▶'}
                 </div>

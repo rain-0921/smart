@@ -56,7 +56,7 @@ export function BuilderModulesPanel({ modules, onAddModule, onEditModule, onAddL
 
 export function BuilderQuizQuestionsPanel({
   questions, feedbackBands, feedbackWarning,
-  submissionType, acceptedFileTypes,
+  submissionType,
   onAddQuestion, onEditQuestion, onDeleteQuestion,
   onAddBand, onEditBand, onDeleteBand,
 }) {
@@ -77,12 +77,7 @@ export function BuilderQuizQuestionsPanel({
 
       {isFileUpload ? (
         <div style={{ fontSize: 13, color: token.inkSoft, lineHeight: 1.6 }}>
-          <p style={{ margin: '0 0 8px' }}>Students will submit a file for this assignment.</p>
-          {acceptedFileTypes && (
-            <p style={{ margin: 0, color: token.inkFaint, fontSize: 12 }}>
-              Accepted file types: <strong>{acceptedFileTypes}</strong>
-            </p>
-          )}
+          <p style={{ margin: 0 }}>Students will submit a file for this assignment.</p>
         </div>
       ) : questions.length === 0 ? (
         <p style={{ fontSize: 12, color: token.inkFaint, margin: 0 }}>No questions yet.</p>
@@ -207,7 +202,6 @@ export function BuilderQuizzesPanel({
                 feedbackBands={feedbackBands}
                 feedbackWarning={feedbackWarning}
                 submissionType={q.submission_type}
-                acceptedFileTypes={q.accepted_file_types}
                 onAddQuestion={onAddQuestion}
                 onEditQuestion={onEditQuestion}
                 onDeleteQuestion={onDeleteQuestion}

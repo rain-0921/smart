@@ -50,6 +50,11 @@ export default function StudentDashboard() {
   // lesson context panel
   const [selectedLesson, setSelectedLesson] = useState(null);
 
+  // Pending deep-link from a "Recommended Next Step" click. Once modules
+  // finish loading for the opened course, this effect resolves the focus
+  // target and selects the corresponding lesson.
+  const [pendingFocus, setPendingFocus] = useState(null);
+
   // assignment (file_upload) state
   const [assignmentData, setAssignmentData] = useState(null);
   const [assignmentFile, setAssignmentFile] = useState(null);
@@ -125,8 +130,12 @@ export default function StudentDashboard() {
       studentGetProgress().then(r => setProgressData(r.data)).catch(() => {});
   }, [tab]);
 
-  // Load modules when course selected
-  const openCourse = async (course) => {
+  // Load modules when course selected.
+  // `focus` is an optional { module_id, lesson_id } pair that, once the
+  // modules are fetched, will auto-open the matching lesson so the student
+  // lands exactly where the recommendation pointed (instead of just on the
+  // course outline).
+  const openCourse = async (course, focus = null) => {
     if (!course.is_enrolled && course.is_enrolled !== undefined && course.is_enrolled < 1) {
       showAlert('Please enroll in this course first.', 'error');
       return;
@@ -139,6 +148,7 @@ export default function StudentDashboard() {
     setModules([]);
     setQuizzes([]);
     setGrades([]);
+    setPendingFocus(focus);
     setTab('lessons');
     studentLogActivity({
       activity_type: 'page_visit',
@@ -156,6 +166,77 @@ export default function StudentDashboard() {
       setQuizzes(q.data);
       setGrades(g.data);
     } catch { showAlert('Failed to load course content', 'error'); }
+  };
+
+  // Pending deep-link from a "Recommended Next Step" click. Once modules
+  // finish loading for the opened course, this effect resolves the focus
+  // target and selects the corresponding lesson.
+  useEffect(() => {
+    if (!pendingFocus || !selectedCourse || modules.length === 0) return;
+    const { lesson_id, module_id } = pendingFocus;
+
+    // Prefer the exact lesson when we know its id.
+    let targetLesson = null;
+    let targetModule = null;
+    for (const mod of modules) {
+      const found = mod.lessons?.find(l => l.lesson_id === lesson_id);
+      if (found) { targetLesson = found; targetModule = mod; break; }
+    }
+    // Fallback: pick the first lesson of the target module.
+    if (!targetLesson && module_id) {
+      targetModule = modules.find(m => m.module_id === module_id) || null;
+      targetLesson = targetModule?.lessons?.[0] || null;
+    }
+    if (targetLesson) {
+      // Log the deep-link so analytics reflect the click-through.
+      studentLogActivity({
+        activity_type: 'lesson_open',
+        description: `Opened lesson from recommendation: ${targetLesson.title}`,
+        related_item_type: 'lesson',
+        related_item_id: targetLesson.lesson_id,
+      }).catch(() => {});
+      if (targetLesson.content_type === 'video') {
+        studentLogActivity({
+          activity_type: 'video_watch',
+          description: `Watched video: ${targetLesson.title}`,
+          related_item_type: 'lesson',
+          related_item_id: targetLesson.lesson_id,
+        }).catch(() => {});
+      }
+      setSelectedLesson(targetLesson);
+      setActiveQuiz(null);
+      setQuizResult(null);
+      setAssignmentData(null);
+      // Smooth-scroll the lesson panel into view after React paints it.
+      setTimeout(() => {
+        const el = document.querySelector('.std-card');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    }
+    setPendingFocus(null);
+  }, [modules, pendingFocus, selectedCourse]);
+
+  // Continue from a "Recommended Next Step" entry.
+  //   - 'module' recommendations deep-link straight into the next lesson.
+  //   - 'quiz'   recommendations open the course, then start the quiz.
+  const handleContinueRecommendation = async (rec) => {
+    if (!rec) { setTab('lessons'); return; }
+    const course = dashboard?.enrollments?.find(e => e.course_id === rec.course_id);
+    if (!course) {
+      showAlert('Course not found for this recommendation.', 'error');
+      return;
+    }
+    if (rec.type === 'quiz') {
+      // Reuse the deadline flow — it already opens the course then starts the quiz.
+      await openCourse(course);
+      await handleStartQuiz(rec.quiz_id);
+      return;
+    }
+    // Default: 'module' — open the course and deep-link to the lesson.
+    await openCourse(course, {
+      module_id: rec.next_module_id,
+      lesson_id: rec.next_lesson_id,
+    });
   };
 
   // Open a deadline straight from the dashboard — opens the course first,
@@ -504,7 +585,7 @@ export default function StudentDashboard() {
       {tab === 'progress' && (
         <StudentProgressSection
           progressData={progressData}
-          onGotoLessons={() => setTab('lessons')}
+          onGotoLessons={handleContinueRecommendation}
         />
       )}
       {tab === 'notifications' && (

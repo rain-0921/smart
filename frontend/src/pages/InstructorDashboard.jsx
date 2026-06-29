@@ -79,6 +79,7 @@ export default function InstructorDashboard() {
   const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '', file: null };
   const toDatetimeLocal = (iso) => {
     if (!iso) return '';
+    // Parse as UTC, then format as local datetime-local
     const d = new Date(iso);
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -86,6 +87,11 @@ export default function InstructorDashboard() {
   const defaultDueDate = () => {
     const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     return d.toISOString().slice(0, 16);
+  };
+  // Convert datetime-local string to ISO 8601 (UTC) before sending to backend
+  const toIsoString = (localStr) => {
+    if (!localStr) return '';
+    return new Date(localStr).toISOString();
   };
   const blankQuiz = { title: '', description: '', due_date: '', time_limit_minutes: '', max_attempts: 1, randomize_questions: false, submission_type: 'online_quiz', num_questions_per_attempt: '', status: 'draft' };
   const blankQ       = { question_type: 'mcq', question_text: '', options: ['', '', '', ''], correct_answer: '', points: 1, improvement_tip: '' };
@@ -225,8 +231,12 @@ export default function InstructorDashboard() {
   // QUIZ
   const saveQuiz = async () => {
     try {
-      if (editingQuiz) { await instrUpdateQuiz(editingQuiz.quiz_id, quizForm); showAlert('Quiz updated.'); }
-      else             { await instrCreateQuiz(selectedCourse.course_id, quizForm); showAlert('Quiz created.'); }
+      const payload = {
+        ...quizForm,
+        due_date: toIsoString(quizForm.due_date),
+      };
+      if (editingQuiz) { await instrUpdateQuiz(editingQuiz.quiz_id, payload); showAlert('Quiz updated.'); }
+      else             { await instrCreateQuiz(selectedCourse.course_id, payload); showAlert('Quiz created.'); }
       setShowQuizModal(false);
       instrGetQuizzes(selectedCourse.course_id).then(r => setQuizzes(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
@@ -243,7 +253,7 @@ export default function InstructorDashboard() {
 
   const publishQuiz = async (quiz) => {
     try {
-      await instrPublishQuiz(quiz.quiz_id, { title: quiz.title, description: quiz.description || '', due_date: quiz.due_date || '', time_limit_minutes: quiz.time_limit_minutes || '', max_attempts: quiz.max_attempts || 1, randomize_questions: quiz.randomize_questions || false, submission_type: quiz.submission_type || 'online_quiz', num_questions_per_attempt: quiz.num_questions_per_attempt || '' });
+      await instrPublishQuiz(quiz.quiz_id, { title: quiz.title, description: quiz.description || '', due_date: toIsoString(quiz.due_date) || '', time_limit_minutes: quiz.time_limit_minutes || '', max_attempts: quiz.max_attempts || 1, randomize_questions: quiz.randomize_questions || false, submission_type: quiz.submission_type || 'online_quiz', num_questions_per_attempt: quiz.num_questions_per_attempt || '' });
       showAlert(`"${quiz.title}" published — students have been notified.`);
       instrGetQuizzes(selectedCourse.course_id).then(r => setQuizzes(r.data));
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
@@ -639,8 +649,8 @@ export default function InstructorDashboard() {
           onEditLesson={(l) => { setEditingLesson(l); setLessonForm({ title: l.title, content_type: l.content_type || 'text', content_url: l.content_url || '', content_text: l.content_text || '', duration_minutes: l.duration_minutes || '', file: null }); setShowLessonModal(true); }}
           onDeleteModule={deleteModule}
           onDeleteLesson={deleteLesson}
-          onAddQuiz={() => { setEditingQuiz(null); setQuizForm(blankQuiz); setShowQuizModal(true); }}
-          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: toDatetimeLocal(q.due_date), time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', num_questions_per_attempt: q.num_questions_per_attempt || '', accepted_file_types: q.accepted_file_types || '', status: q.status || 'draft' }); setShowQuizModal(true); }}
+          onAddQuiz={() => { setEditingQuiz(null); setQuizForm({ ...blankQuiz, due_date: defaultDueDate() }); setShowQuizModal(true); }}
+          onEditQuiz={(q) => { setEditingQuiz(q); setQuizForm({ title: q.title, description: q.description || '', due_date: toDatetimeLocal(q.due_date), time_limit_minutes: q.time_limit_minutes || '', max_attempts: q.max_attempts || 1, randomize_questions: q.randomize_questions || false, submission_type: q.submission_type || 'online_quiz', num_questions_per_attempt: q.num_questions_per_attempt || '', status: q.status || 'draft' }); setShowQuizModal(true); }}
           onDeleteQuiz={deleteQuiz}
           onToggleQuiz={(q) => selectedQuiz?.quiz_id === q.quiz_id ? setSelectedQuiz(null) : openQuiz(q)}
           onPublishQuiz={publishQuiz}
