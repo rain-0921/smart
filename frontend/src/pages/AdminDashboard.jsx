@@ -44,7 +44,6 @@ export default function AdminDashboard() {
   const { alert, showAlert }      = useDashboardAlerts(3500);
   const [loading, setLoading]     = useState({});
 
-  // data
   const [dashboard, setDashboard]  = useState(null);
   const [users, setUsers]         = useState([]);
   const [courses, setCourses]     = useState([]);
@@ -60,7 +59,6 @@ export default function AdminDashboard() {
   const [reportStart, setReportStart] = useState('');
   const [reportEnd, setReportEnd]   = useState('');
 
-  // modals
   const [showUserModal, setShowUserModal]         = useState(false);
   const [showCourseModal, setShowCourseModal]     = useState(false);
   const [showEnrollModal, setShowEnrollModal]     = useState(false);
@@ -73,7 +71,6 @@ export default function AdminDashboard() {
   const [detailLogs, setDetailLogs]               = useState([]);
   const [detailLogUsername, setDetailLogUsername] = useState('');
 
-  // advisor assignment data
   const [advisorStudents, setAdvisorStudents] = useState([]);
   const [advisors, setAdvisors]             = useState([]);
   const [showAdvisorModal, setShowAdvisorModal] = useState(false);
@@ -82,21 +79,19 @@ export default function AdminDashboard() {
 
   const [logViewMode, setLogViewMode] = useState('user-list');
 
-  // forms
   const [userForm, setUserForm] = useState({ username: '', email: '', password: '', role: 'student', department: '', phone_number: '', status: 'active' });
   const [courseForm, setCourseForm] = useState({ title: '', description: '', instructor_id: '', status: 'draft' });
   const [enrollForm, setEnrollForm] = useState({ user_id: '', course_id: '' });
   const [enrollEditForm, setEnrollEditForm] = useState({ user_id: '', course_id: '', status: 'active' });
   const [notifForm, setNotifForm]   = useState({ title: '', message: '', type: 'announcement', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
 
-  // log filters
   const [logFilterRole, setLogFilterRole]         = useState('');
   const [logFilterCategory, setLogFilterCategory] = useState('');
   const [logFilterStart, setLogFilterStart]       = useState('');
   const [logFilterEnd, setLogFilterEnd]           = useState('');
   const [logFilterRoles, setLogFilterRoles]       = useState([]);
   const [logActivityCategories, setLogActivityCategories] = useState([]);
-  const [filterLoading, setFilterLoading]         = useState(true); // start true so loading shows on first visit
+  const [filterLoading, setFilterLoading]         = useState(true);
 
   const withLoading = useCallback(async (key, fn) => {
     setLoading(l => ({ ...l, [key]: true }));
@@ -105,7 +100,6 @@ export default function AdminDashboard() {
     finally { setLoading(l => ({ ...l, [key]: false })); }
   }, [showAlert]);
 
-  // fetch on tab change
   useEffect(() => {
     if (tab === 'dashboard')   withLoading('dashboard',  async () => setDashboard((await adminGetDashboard()).data));
     if (tab === 'users')       withLoading('users',      async () => {
@@ -147,7 +141,7 @@ export default function AdminDashboard() {
         setFilterLoading(false);
       });
     }
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   useEffect(() => {
     adminGetLogFilters().then(r => {
@@ -156,7 +150,6 @@ export default function AdminDashboard() {
     }).catch(() => {});
   }, []);
 
-  // user CRUD
   const openAddUser = () => {
     setEditingUser(null);
     setUserForm({ username: '', email: '', password: '', role: 'student', department: '', phone_number: '', status: 'active' });
@@ -177,7 +170,6 @@ export default function AdminDashboard() {
     catch { showAlert('Failed', 'error'); }
   };
 
-  // course CRUD
   const openAddCourse = () => {
     setEditingCourse(null);
     setCourseForm({ title: '', description: '', instructor_id: '', status: 'draft' });
@@ -203,7 +195,6 @@ export default function AdminDashboard() {
     catch { showAlert('Failed', 'error'); }
   };
 
-  // enrollment CRUD
   const saveEnrollment = async () => {
     try { await adminAddEnrollment(enrollForm); showAlert('Enrollment added'); setShowEnrollModal(false); adminGetEnrollments().then(r => setEnrollments(r.data)); }
     catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
@@ -233,7 +224,6 @@ export default function AdminDashboard() {
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
 
-  // advisor assignment
   const openAssignAdvisor = (student) => {
     setAssigningStudent(student);
     setAssignForm({ advisor_id: student.advisor_id || '' });
@@ -250,7 +240,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // notification CRUD
   const openAddNotif = () => {
     setEditingNotif(null);
     setNotifForm({ title: '', message: '', type: 'announcement', target_mode: 'role', target_role: 'student', user_id: '', course_id: '', target_all: false, scheduled_at: '' });
@@ -295,7 +284,6 @@ export default function AdminDashboard() {
     catch { showAlert('Failed', 'error'); }
   };
 
-  // reports
   const changeReportType = (type) => { setSelectedReportType(type); setReports(null); };
   const runReport = useCallback(async () => {
     setReportLoading(true);
@@ -307,7 +295,6 @@ export default function AdminDashboard() {
       setReports(res.data);
     } catch (e) { showAlert(e.response?.data?.message || 'Failed to load report', 'error'); }
     finally { setReportLoading(false); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedReportType, reportStart, reportEnd]);
 
   const exportReport = async () => {
@@ -330,7 +317,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // logs
   const applyLogFilters = useCallback(async () => {
     setFilterLoading(true);
     try {
@@ -344,7 +330,6 @@ export default function AdminDashboard() {
       setLogViewMode('logs');
     } catch { showAlert('Failed to load logs', 'error'); }
     finally { setFilterLoading(false); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logFilterRole, logFilterCategory, logFilterStart, logFilterEnd]);
 
   const exportLogs = async () => {

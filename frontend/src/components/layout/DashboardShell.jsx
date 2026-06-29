@@ -1,15 +1,5 @@
 import { token, styles } from '../../theme';
 
-/**
- * DashboardShell — the common page chrome used by every role dashboard.
- *
- * Renders:
- *   - <Sidebar />   with role-aware nav
- *   - <Header />    with title/search/notifications
- *   - main content  area passed as children
- *
- * Each role's dashboard passes its own navGroups + title helpers.
- */
 export default function DashboardShell({
   sidebar,
   header,

@@ -15,12 +15,10 @@ export default function StudentDashboardSection({ user, dashboard, notifications
   const atRisk = dashboard.profile?.is_at_risk;
   const deadlinesCount = dashboard.deadlines?.length || 0;
 
-  // Decide what label / click handler to use for each upcoming deadline row.
   const deadlineActionFor = (d) => {
     const isAssignment = d.submission_type && d.submission_type !== 'online_quiz';
     const hasAttempt = !!d.latest_attempt_id;
     if (hasAttempt && (d.latest_attempt_status === 'submitted' || d.latest_attempt_status === 'graded')) {
-      // Allow resubmit on file assignments until the deadline
       if (isAssignment && d.latest_attempt_status === 'submitted' && !d.deadline_passed) {
         return { label: 'Resubmit', tone: 'due', onClick: () => onOpenDeadline(d) };
       }

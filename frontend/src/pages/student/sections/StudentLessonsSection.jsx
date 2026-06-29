@@ -207,7 +207,6 @@ export function LessonContentPanel({ selectedLesson, modules, onClose, onComplet
   if (!selectedLesson) return null;
   const parentMod = modules.find(m => m.lessons?.some(l => l.lesson_id === selectedLesson.lesson_id));
 
-  // Video block
   const videoContent = (() => {
     if (selectedLesson.content_type !== 'video' || !selectedLesson.content_url) return null;
     const url = selectedLesson.content_url;
@@ -329,18 +328,16 @@ export function QuizListPanel({ quizzes, onStartQuiz, onOpenAssignment, onViewGr
       return q.type === 'assignment' ? 'Attempt' : 'Start';
     }
     if (q.status === 'submitted' || q.status === 'completed' || q.status === 'graded') {
-      // Allow resubmit for file assignments (unless the deadline has passed)
       if (q.type === 'assignment' && !q.deadline_passed) return 'Resubmit';
       return q.latest_attempt_id ? 'View Result' : null;
     }
-    return null; // closed — no button
+    return null;
   };
 
   const handleClick = (q) => {
     const action = getAction(q);
     if (!action) return;
     if (action === 'View Result') {
-      // Pass the attempt id, NOT the quiz id — the backend expects quiz_attempt_id
       onViewGrade(q.latest_attempt_id);
     } else if (q.type === 'assignment') {
       onOpenAssignment(q.quiz_id);

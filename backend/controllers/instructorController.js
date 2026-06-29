@@ -1,9 +1,6 @@
 const db = require('../config/db');
 const { inferContentType } = require('../middleware/materialUpload');
 
-// ─── HELPER ─────────────────────────────────────────────
-// Returns user_id[] for all students actively enrolled in a course.
-// Used by updateCourse and updateQuiz to fan-out notifications on publish.
 async function getActiveEnrolledStudents(courseId) {
   const [rows] = await db.execute(
     `SELECT user_id FROM enrollment WHERE course_id=? AND status='active'`,
@@ -12,8 +9,6 @@ async function getActiveEnrolledStudents(courseId) {
   return rows.map(r => r.user_id);
 }
 
-// Verifies the requesting instructor owns the course identified by courseId.
-// Throws 403 if not found (or owned by another instructor).
 async function requireCourseOwnership(courseId, userId) {
   const [[row]] = await db.execute(
     'SELECT 1 FROM course WHERE course_id=? AND instructor_id=?',
@@ -22,8 +17,6 @@ async function requireCourseOwnership(courseId, userId) {
   if (!row) throw { status: 403, message: 'Course not found or not owned by you' };
 }
 
-// Verifies the quiz belongs to a course owned by the requesting instructor.
-// Throws 403 if not found (or owned by another instructor).
 async function requireQuizOwnership(quizId, userId) {
   const [[row]] = await db.execute(
     `SELECT 1 FROM quiz q JOIN course c ON q.course_id=c.course_id
@@ -33,7 +26,6 @@ async function requireQuizOwnership(quizId, userId) {
   if (!row) throw { status: 403, message: 'Quiz not found or not owned by you' };
 }
 
-// Verifies the question belongs to a quiz in a course owned by the requesting instructor.
 async function requireQuizOwnershipByQuestion(questionId, userId) {
   const [[row]] = await db.execute(
     `SELECT 1 FROM question qq
@@ -45,7 +37,6 @@ async function requireQuizOwnershipByQuestion(questionId, userId) {
   if (!row) throw { status: 403, message: 'Question not found or not owned by you' };
 }
 
-// Verifies the feedback belongs to a quiz in a course owned by the requesting instructor.
 async function requireQuizOwnershipByFeedback(feedbackId, userId) {
   const [[row]] = await db.execute(
     `SELECT 1 FROM quiz_feedback qf
@@ -57,14 +48,11 @@ async function requireQuizOwnershipByFeedback(feedbackId, userId) {
   if (!row) throw { status: 403, message: 'Feedback band not found or not owned by you' };
 }
 
-// Allowed values for DB-enum columns. Centralising them here lets us
-// return a clean 400 instead of a MySQL 500 when the client mis-sends.
 const VALID_QUIZ_SUBMISSION_TYPES = ['online_quiz', 'file_upload', 'mixed'];
 const VALID_COURSE_STATUSES        = ['draft', 'published', 'archived'];
 const VALID_LESSON_CONTENT_TYPES   = ['video', 'text', 'pdf', 'other'];
 const VALID_QUESTION_TYPES        = ['mcq', 'fill_blank', 'short_answer'];
 
-// ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -99,7 +87,6 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
-// ─── PROFILE ─────────────────────────────────────────────
 exports.getProfile = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -123,13 +110,9 @@ exports.updateProfile = async (req, res) => {
   if (username.length > 50)
     return res.status(400).json({ message: 'Username must not exceed 50 characters' });
 
-  // req.file is set by the `handlePhotoUpload` multer middleware in instructorRoutes.js.
-  // Format (JPG/PNG) and size (<=5MB) are already validated there per SDS 7.2.2.
   const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
 
   try {
-    // Reject duplicate usernames up front so the user gets a clean 409
-    // instead of a MySQL UNIQUE-violation 500.
     const [[taken]] = await db.execute(
       `SELECT user_id FROM user WHERE username=? AND user_id<>? LIMIT 1`,
       [username, userId]
@@ -142,7 +125,6 @@ exports.updateProfile = async (req, res) => {
         [username, phone_number||null, department||null, photo_url, userId]
       );
     } else {
-      // No new photo uploaded — leave the existing photo_url untouched.
       await db.execute(
         `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
         [username, phone_number||null, department||null, userId]
@@ -163,7 +145,6 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-// ─── COURSES ─────────────────────────────────────────────
 exports.getMyCourses = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -216,13 +197,11 @@ exports.updateCourse = async (req, res) => {
   if (!VALID_COURSE_STATUSES.includes(status))
     return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID_COURSE_STATUSES.join(', ')}` });
   try {
-    // Grab current status first so we know whether this is a draft -> published transition
     const [[existing]] = await db.execute(
       `SELECT status FROM course WHERE course_id=? AND instructor_id=?`, [id, userId]
     );
     if (!existing) return res.status(404).json({ message: 'Course not found' });
 
-    // Check course has lessons before publishing
     if (status === 'published') {
       const [[{ lessonCount }]] = await db.execute(
         `SELECT COUNT(*) AS lessonCount FROM lesson l
@@ -237,7 +216,6 @@ exports.updateCourse = async (req, res) => {
       [title, description||null, status, id, userId]
     );
 
-    // ── FIX: notify enrolled students when course transitions to 'published' ──
     if (status === 'published' && existing.status !== 'published') {
       const studentIds = await getActiveEnrolledStudents(id);
       if (studentIds.length > 0) {
@@ -277,7 +255,6 @@ exports.deleteCourse = async (req, res) => {
   }
 };
 
-// ─── MODULES ─────────────────────────────────────────────
 exports.getCourseModules = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -357,7 +334,6 @@ exports.deleteModule = async (req, res) => {
   }
 };
 
-// ─── LESSONS / MATERIALS ─────────────────────────────────
 exports.createLesson = async (req, res) => {
   const userId = req.user.user_id;
   const { moduleId } = req.params;
@@ -366,7 +342,6 @@ exports.createLesson = async (req, res) => {
     return res.status(400).json({ message: 'Title is required' });
 
   try {
-    // Verify the module belongs to one of this instructor's courses
     const [[mod]] = await db.execute(
       `SELECT m.module_id FROM module m JOIN course c ON m.course_id=c.course_id
        WHERE m.module_id=? AND c.instructor_id=?`, [moduleId, userId]
@@ -460,7 +435,6 @@ exports.deleteLesson = async (req, res) => {
   }
 };
 
-// ─── QUIZZES ─────────────────────────────────────────────
 exports.getCourseQuizzes = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -481,9 +455,6 @@ exports.getCourseQuizzes = async (req, res) => {
                 q.num_questions_per_attempt, q.submission_type, q.created_at
        ORDER BY q.created_at DESC`, [courseId]
     );
-    // Normalize due_date to ISO-8601 UTC so the frontend can parse it
-    // without timezone ambiguity (a bare "YYYY-MM-DD HH:mm:ss" string would
-    // otherwise be interpreted as local time on the browser, shifting the date).
     for (const q of quizzes) {
       if (!q.due_date) continue;
       if (q.due_date instanceof Date) q.due_date = q.due_date.toISOString();
@@ -556,13 +527,11 @@ exports.updateQuiz = async (req, res) => {
     return res.status(400).json({ message: 'num_questions_per_attempt must be a positive integer (or leave blank)' });
   try {
     await requireQuizOwnership(quizId, userId);
-    // Grab current status + course_id before update (needed for publish check + notify)
     const [[existing]] = await db.execute(
       `SELECT status, course_id FROM quiz WHERE quiz_id=?`, [quizId]
     );
     if (!existing) return res.status(404).json({ message: 'Quiz not found' });
 
-    // Check has questions before publishing (skip for file_upload type)
     if (status === 'published' && resolvedSubmissionType !== 'file_upload') {
       const [[{ qCount }]] = await db.execute(
         `SELECT COUNT(*) AS qCount FROM question WHERE quiz_id=?`, [quizId]
@@ -579,7 +548,6 @@ exports.updateQuiz = async (req, res) => {
        num_questions_per_attempt||null, status, quizId]
     );
 
-    // ── FIX: notify enrolled students when quiz transitions to 'published' ──
     if (status === 'published' && existing.status !== 'published') {
       const [[{ course_name }]] = await db.execute(
         `SELECT title AS course_name FROM course WHERE course_id=?`, [existing.course_id]
@@ -620,7 +588,6 @@ exports.deleteQuiz = async (req, res) => {
   }
 };
 
-// ─── QUESTIONS ───────────────────────────────────────────
 exports.getQuizQuestions = async (req, res) => {
   const userId = req.user.user_id;
   const { quizId } = req.params;
@@ -648,7 +615,6 @@ exports.addQuestion = async (req, res) => {
     return res.status(400).json({ message: 'points must be a positive integer' });
   if (improvement_tip && String(improvement_tip).length > 500)
     return res.status(400).json({ message: 'Improvement tip must not exceed 500 characters' });
-  // For MCQ, correct_answer must be one of the provided options.
   if (question_type === 'mcq') {
     if (!Array.isArray(options) || options.length < 2)
       return res.status(400).json({ message: 'MCQ questions require at least 2 options' });
@@ -688,14 +654,6 @@ exports.deleteQuestion = async (req, res) => {
   }
 };
 
-// Update an existing question — used to revise the per-question
-// improvement_tip (or any other field) after the quiz has been published.
-// Spec UC2.4.6 caps feedback text at 500 characters per question.
-// IMPORTANT: once any student has attempted this quiz, the academic-integrity-
-// critical fields (question_text, options, correct_answer, points, question_type)
-// are LOCKED. Only improvement_tip can be edited. This prevents instructors
-// from silently rewriting the answer key after the fact and invalidating prior
-// scores. To change the question itself, archive this one and add a replacement.
 exports.updateQuestion = async (req, res) => {
   const userId = req.user.user_id;
   const { questionId } = req.params;
@@ -716,7 +674,6 @@ exports.updateQuestion = async (req, res) => {
       return res.status(400).json({ message: 'Improvement tip must not exceed 500 characters' });
     }
 
-    // Lock integrity-critical fields after attempts exist.
     const lockedFields = { question_type, question_text, options, correct_answer, points };
     const attemptedLockedFields = Object.entries(lockedFields)
       .filter(([, v]) => v !== undefined && v !== null);
@@ -727,7 +684,6 @@ exports.updateQuestion = async (req, res) => {
       });
     }
 
-    // Validate the integrity-critical fields before any attempts exist too.
     if (question_type !== undefined && question_type !== null && !VALID_QUESTION_TYPES.includes(question_type))
       return res.status(400).json({ message: `Invalid question_type. Must be one of: ${VALID_QUESTION_TYPES.join(', ')}` });
     if (points !== undefined && points !== null && (Number(points) < 1 || !Number.isInteger(Number(points))))
@@ -764,7 +720,6 @@ exports.updateQuestion = async (req, res) => {
   }
 };
 
-// ─── QUIZ FEEDBACK (score-band messages) ─────────────────
 exports.getQuizFeedback = async (req, res) => {
   const userId = req.user.user_id;
   const { quizId } = req.params;
@@ -774,7 +729,6 @@ exports.getQuizFeedback = async (req, res) => {
       `SELECT quiz_feedback_id, quiz_id, min_score, max_score, feedback_message
        FROM quiz_feedback WHERE quiz_id=? ORDER BY min_score ASC`, [quizId]
     );
-    // Warn the instructor if the quiz has already been attempted
     const [[{ attemptCount }]] = await db.execute(
       `SELECT COUNT(*) AS attemptCount FROM quiz_attempt WHERE quiz_id=?`, [quizId]
     );
@@ -850,7 +804,6 @@ exports.deleteQuizFeedback = async (req, res) => {
   }
 };
 
-// ─── STUDENT PROGRESS ────────────────────────────────────
 exports.getCourseStudents = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -879,9 +832,6 @@ exports.getCourseStudents = async (req, res) => {
   }
 };
 
-// Per-student drill-down: returns profile, courses with completion, full quiz
-// attempt history, and assignment submissions. Authorization: the student must
-// be enrolled in at least one of the requesting instructor's courses.
 exports.getStudentDetail = async (req, res) => {
   const userId = req.user.user_id;
   const { studentId } = req.params;
@@ -945,22 +895,15 @@ exports.getStudentDetail = async (req, res) => {
   }
 };
 
-// ─── PDF BUILDER (zero-deps, A4 portrait, Helvetica) ──────
-// SPEC UC2.4.8 calls for "PDF or CSV" export of the student-progress report.
-// CSV is provided by exportCourseStudents; this adds the PDF variant using
-// just Node built-ins so we don't have to add a PDF library dependency.
-//
-// The output is a minimal but valid PDF 1.4 document. It handles a single
-// page of rows in a simple table layout and overflows to additional pages.
 function buildStudentsPdf(students, courseTitle) {
-  const PAGE_W = 595;       // A4 width  in points
-  const PAGE_H = 842;       // A4 height in points
+  const PAGE_W = 595;
+  const PAGE_H = 842;
   const MARGIN = 45;
   const ROW_H = 22;
-  const TH = 20;                        // column-header row height
-  const HEAD_Y = 52;                    // top of column-header row
-  const COL_HEADER_BOTTOM = HEAD_Y + TH;// y-coordinate where column-header ends (=72)
-  const ROW_START_Y = COL_HEADER_BOTTOM + 15; // first row starts 8pt below header
+  const TH = 20;
+  const HEAD_Y = 52;
+  const COL_HEADER_BOTTOM = HEAD_Y + TH;
+  const ROW_START_Y = COL_HEADER_BOTTOM + 15;
   const rowCapacity = Math.floor((PAGE_H - MARGIN - ROW_START_Y) / ROW_H);
 
   const COLS = [
@@ -972,28 +915,26 @@ function buildStudentsPdf(students, courseTitle) {
     { key: 'is_at_risk',         label: 'Risk',             x: MARGIN + 440, w: 60  },
   ];
 
-  // ── Color palette ──────────────────────────────────────────────────────────
   const C = {
-    headerBg:    [0.13, 0.26, 0.40],  // deep navy
+    headerBg:    [0.13, 0.26, 0.40],
     headerText:  [1, 1, 1],
-    summaryBg:   [0.95, 0.97, 1.0],  // very light blue
-    summaryVal:  [0.13, 0.26, 0.40],  // navy values
-    rowAlt:      [0.97, 0.98, 1.0],  // alternating row tint
+    summaryBg:   [0.95, 0.97, 1.0],
+    summaryVal:  [0.13, 0.26, 0.40],
+    rowAlt:      [0.97, 0.98, 1.0],
     rowWhite:    [1, 1, 1],
-    colHeader:   [0.10, 0.22, 0.40], // slightly lighter navy for col headers
-    border:      [0.72, 0.78, 0.90],  // clear table grid lines
-    borderH:     [0.55, 0.62, 0.78], // slightly darker for outer border
-    riskYes:     [0.82, 0.12, 0.12],  // red
-    riskNo:      [0.12, 0.60, 0.28],  // green
+    colHeader:   [0.10, 0.22, 0.40],
+    border:      [0.72, 0.78, 0.90],
+    borderH:     [0.55, 0.62, 0.78],
+    riskYes:     [0.82, 0.12, 0.12],
+    riskNo:      [0.12, 0.60, 0.28],
     statusActive:[0.12, 0.60, 0.28],
     statusOther: [0.50, 0.50, 0.50],
-    labelText:   [0.45, 0.52, 0.65],  // muted label color
+    labelText:   [0.45, 0.52, 0.65],
     bodyText:    [0.18, 0.22, 0.32],
   };
 
   const rgb  = (c) => `${c[0].toFixed(3)} ${c[1].toFixed(3)} ${c[2].toFixed(3)}`;
 
-  // ── PDF object table ───────────────────────────────────────────────────────
   const objs = [];
   const push = (body) => { objs.push(body); return objs.length; };
 
@@ -1010,23 +951,10 @@ function buildStudentsPdf(students, courseTitle) {
     .replace(/\(/g, '\\(')
     .replace(/\)/g, '\\)');
 
-  // ── Page builder ───────────────────────────────────────────────────────────
   const pages = [];
   const newPage = () => { const ops = []; pages.push(ops); return ops; };
 
-  // Y landmarks (all measured from page BOTTOM, so larger = higher on page):
-  //   y=822  page top
-  //   y=808  page title
-  //   y=792  subtitle
-  //   y=776  header bar TOP, y=736 header bar BOTTOM
-  //   y=726  accent line
-  //   y=148  summary BOTTOM, y=120 summary TOP
-  //   y=126  col-header BOTTOM, y=106 col-header TOP
-  //   y=96   ROW[0] TOP
-  //   y=20   last row BOTTOM (above 40pt page margin)
-
   const drawPageHeader = (ops, pageNum, totalPages) => {
-    // ── Page title at top ──────────────────────────────────────────────────
     ops.push('BT');
     ops.push('/F2 14 Tf');
     ops.push(`${rgb(C.headerBg)} rg`);
@@ -1034,11 +962,9 @@ function buildStudentsPdf(students, courseTitle) {
     ops.push(`(${esc(courseTitle || 'Student Progress Report')}) Tj`);
     ops.push('ET');
 
-    // ── Navy header bar (contains subtitle + page number on same row) ───────
-    ops.push(`${MARGIN} ${PAGE_H - 776} ${PAGE_W - 2 * MARGIN} 40 re f`);  // rect from y=736 to y=776
+    ops.push(`${MARGIN} ${PAGE_H - 776} ${PAGE_W - 2 * MARGIN} 40 re f`);
     ops.push(`${rgb(C.headerBg)} rg`);
 
-    // Subtitle text (left)
     ops.push('BT');
     ops.push('/F3 9 Tf');
     ops.push(`${rgb(C.headerText)} rg`);
@@ -1046,7 +972,6 @@ function buildStudentsPdf(students, courseTitle) {
     ops.push(`(Course Progress Report  ·  Generated ${esc(new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'}))}) Tj`);
     ops.push('ET');
 
-    // Page number (right)
     ops.push('BT');
     ops.push('/F3 9 Tf');
     ops.push(`${rgb(C.headerText)} rg`);
@@ -1054,13 +979,11 @@ function buildStudentsPdf(students, courseTitle) {
     ops.push(`(Page ${pageNum} of ${totalPages}) Tj`);
     ops.push('ET');
 
-    // ── Accent line below bar ────────────────────────────────────────────────
     ops.push(`${MARGIN} ${PAGE_H - 726} ${PAGE_W - 2 * MARGIN} 2 re f`);
-    ops.push(`0.22 0.48 0.72 rg`);
-    ops.push(`${rgb(C.headerBg)} rg`);  // reset fill to black for subsequent content
+    ops.push('0.22 0.48 0.72 rg');
+    ops.push(`${rgb(C.headerBg)} rg`);
   };
 
-  // ── Summary stats ─────────────────────────────────────────────────────────
   const totalStudents = students.length;
   const overallAvg    = students.reduce((a, s) => a + Number(s.avg_score ?? 0), 0) / totalStudents || 0;
   const atRiskCount   = students.filter(s => s.is_at_risk).length;
@@ -1068,17 +991,15 @@ function buildStudentsPdf(students, courseTitle) {
 
   const drawSummary = (ops) => {
     const sx = MARGIN;
-    const sy = PAGE_H - 148;     // bottom of summary box
+    const sy = PAGE_H - 148;
     const sw = (PAGE_W - 2 * MARGIN) / 4;
     const sh = 28;
 
-    // Background
     ops.push(`${sx} ${sy} ${PAGE_W - 2 * MARGIN} ${sh} re f`);
     ops.push(`${rgb(C.summaryBg)} rg`);
-    ops.push(`${sx} ${sy} ${PAGE_W - 2 * MARGIN} ${sh} re f`);   // fill
+    ops.push(`${sx} ${sy} ${PAGE_W - 2 * MARGIN} ${sh} re f`);
     ops.push(`${rgb(C.summaryBg)} rg`);
 
-    // Separator lines between stat cells
     for (let i = 1; i < 4; i++) {
       ops.push(`${sx + i * sw} ${sy} 1 ${sh} re f`);
       ops.push(`${rgb(C.border)} rg`);
@@ -1105,12 +1026,10 @@ function buildStudentsPdf(students, courseTitle) {
     });
   };
 
-  // ── Column headers ────────────────────────────────────────────────────────
   const drawTableHeader = (ops) => {
     ops.push(`${MARGIN} ${PAGE_H - HEAD_Y - TH} ${PAGE_W - 2 * MARGIN} ${TH} re f`);
     ops.push(`${rgb(C.colHeader)} rg`);
 
-    // Top border of column header row
     ops.push(`${MARGIN} ${PAGE_H - HEAD_Y} ${PAGE_W - 2 * MARGIN} 1.5 re f`);
     ops.push(`${rgb(C.headerBg)} rg`);
 
@@ -1124,28 +1043,23 @@ function buildStudentsPdf(students, courseTitle) {
     ops.push('ET');
   };
 
-  // ── Row rendering ─────────────────────────────────────────────────────────
   let rowIndex = 0;
 
   const printRow = (s, y, shade) => {
     const cur = pages[pages.length - 1];
 
-    // Row background
     cur.push(`${MARGIN} ${PAGE_H - y - ROW_H} ${PAGE_W - 2 * MARGIN} ${ROW_H} re f`);
     cur.push(`${rgb(shade ? C.rowAlt : C.rowWhite)} rg`);
 
-    // Cell borders (vertical lines between columns)
     for (let i = 1; i < COLS.length; i++) {
       const bx = COLS[i].x;
       cur.push(`${bx} ${PAGE_H - y} 1 ${-ROW_H} re f`);
       cur.push(`${rgb(C.border)} rg`);
     }
 
-    // Top border of row
     cur.push(`${MARGIN} ${PAGE_H - y} ${PAGE_W - 2 * MARGIN} 0.5 re f`);
     cur.push(`${rgb(C.border)} rg`);
 
-    // Cell text
     cur.push('BT');
     cur.push('/F1 9 Tf');
     cur.push(`${rgb(C.bodyText)} rg`);
@@ -1174,7 +1088,6 @@ function buildStudentsPdf(students, courseTitle) {
     cur.push('ET');
   };
 
-  // ── Page assembly ──────────────────────────────────────────────────────────
   const totalRows   = students.length;
   const extraPages  = Math.max(0, Math.floor((totalRows - rowCapacity) / rowCapacity));
   const totalPages  = 1 + extraPages;
@@ -1196,7 +1109,6 @@ function buildStudentsPdf(students, courseTitle) {
     rowIndex++;
   }
 
-  // ── Serialize ───────────────────────────────────────────────────────────────
   const pageIds = [];
   for (let i = 0; i < pages.length; i++) {
     const contentStream = pages[i].join('\n');
@@ -1222,8 +1134,6 @@ function buildStudentsPdf(students, courseTitle) {
   return Buffer.from(body, 'binary');
 }
 
-// Spec UC2.4.8 — export the enrolled-students progress report as PDF.
-// Returns a minimal but valid PDF document so no external library is needed.
 exports.exportCourseStudentsPdf = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -1264,8 +1174,6 @@ exports.exportCourseStudentsPdf = async (req, res) => {
   }
 };
 
-// Stream the enrolled-students list for a course as a CSV file. Spec UC2.4.8
-// requires the instructor be able to export the report as PDF or CSV.
 exports.exportCourseStudents = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -1310,14 +1218,12 @@ exports.exportCourseStudents = async (req, res) => {
   }
 };
 
-// RFC 4180 CSV field escape. Duplicated locally so this controller is self-contained.
 function toCsvValue(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// ─── GRADE ASSIGNMENTS ───────────────────────────────────
 exports.getPendingSubmissions = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -1353,7 +1259,6 @@ exports.gradeSubmission = async (req, res) => {
   if (numericScore < 0 || numericScore > 100)
     return res.status(400).json({ message: 'Score must be between 0 and 100' });
   try {
-    // Verify this submission belongs to a quiz in one of this instructor's courses
     const [[row]] = await db.execute(
       `SELECT qa.quiz_attempt_id, qa.status FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id
@@ -1362,8 +1267,6 @@ exports.gradeSubmission = async (req, res) => {
       [attemptId, userId]
     );
     if (!row) return res.status(403).json({ message: 'Submission not found or not yours' });
-    // Block silent re-grading of an already-graded attempt — overwriting a prior
-    // score without a history trail would be an academic-integrity hazard.
     if (row.status === 'graded') {
       return res.status(409).json({ message: 'Submission has already been graded' });
     }
@@ -1371,13 +1274,11 @@ exports.gradeSubmission = async (req, res) => {
       return res.status(400).json({ message: `Cannot grade an attempt with status '${row.status}'` });
     }
 
-    // Update the quiz_attempt score and status
     await db.execute(
       `UPDATE quiz_attempt SET score=?, status='graded', end_time=NOW() WHERE quiz_attempt_id=?`,
       [numericScore, attemptId]
     );
 
-    // ── Recalculate GPA and notify advisor if below 2.0 ──
     const [attemptInfo] = await db.execute(
       `SELECT qa.user_id, qa.score, u.username AS student_name, sp.advisor_id
        FROM quiz_attempt qa
@@ -1422,17 +1323,12 @@ exports.gradeSubmission = async (req, res) => {
       }
     }
 
-    // Update all answer records for this attempt with instructor feedback.
-// Only set feedback when the request actually provided one, AND only fill
-// rows that don't already have per-answer feedback (a future per-question
-// grader endpoint can set individual answers without being clobbered here).
 if (feedback && String(feedback).length > 0) {
   await db.execute(
     `UPDATE answer SET feedback=? WHERE quiz_attempt_id=? AND (feedback IS NULL OR feedback='')`,
     [feedback, attemptId]
   );
 }
-    // Notify student
     const [attempt] = await db.execute(
       `SELECT qa.user_id, q.title FROM quiz_attempt qa
        JOIN quiz q ON qa.quiz_id = q.quiz_id WHERE qa.quiz_attempt_id=?`, [attemptId]
@@ -1450,11 +1346,6 @@ if (feedback && String(feedback).length > 0) {
   }
 };
 
-// ─── ANALYTICS ───────────────────────────────────────────
-// Accepts optional ?from=YYYY-MM-DD&to=YYYY-MM-DD to scope all metrics.
-// Returns quizStats (avg score per quiz), enrollmentTrend (daily counts),
-// scoreDistribution (5 buckets), submissionRate (submitted/active),
-// and basic completed/total enrollment counts.
 exports.getAnalytics = async (req, res) => {
   const userId = req.user.user_id;
   const { courseId } = req.params;
@@ -1463,7 +1354,6 @@ exports.getAnalytics = async (req, res) => {
   try {
     await requireCourseOwnership(courseId, userId);
 
-    // Build a date range predicate when both endpoints provided.
     const range = [];
     let rangeClause = '';
     if (from && to) {
@@ -1483,7 +1373,6 @@ exports.getAnalytics = async (req, res) => {
     else if (from) { enrRange.push(from); enrRangeClause = 'AND DATE(enrolled_at) >= ?'; }
     else if (to) { enrRange.push(to); enrRangeClause = 'AND DATE(enrolled_at) <= ?'; }
 
-    // Average score per quiz, scoped to the date range.
     const [quizStats] = await db.execute(
       `SELECT q.title, COALESCE(AVG(qa.score),0) AS avg_score,
               COUNT(qa.quiz_attempt_id) AS attempts
@@ -1493,7 +1382,6 @@ exports.getAnalytics = async (req, res) => {
        GROUP BY q.quiz_id, q.title`, [...range, courseId, userId]
     );
 
-    // Daily enrollment counts (last 30 within the range).
     const [enrollmentTrend] = await db.execute(
       `SELECT DATE(enrolled_at) AS date, COUNT(*) AS count
        FROM enrollment WHERE course_id=? ${enrRangeClause}
@@ -1501,37 +1389,33 @@ exports.getAnalytics = async (req, res) => {
        ORDER BY date ASC LIMIT 30`, [courseId, ...enrRange]
     );
 
-    // Score distribution: bucket graded attempts into 5 ranges.
     const [scoreDistribution] = await db.execute(
       `SELECT
-         SUM(CASE WHEN score < 50 THEN 1 ELSE 0 END) AS '0_49',
-         SUM(CASE WHEN score >= 50 AND score < 60 THEN 1 ELSE 0 END) AS '50_59',
-         SUM(CASE WHEN score >= 60 AND score < 70 THEN 1 ELSE 0 END) AS '60_69',
-         SUM(CASE WHEN score >= 70 AND score < 80 THEN 1 ELSE 0 END) AS '70_79',
-         SUM(CASE WHEN score >= 80 THEN 1 ELSE 0 END) AS '80_100',
-         COUNT(*) AS total
+        SUM(CASE WHEN score < 50 THEN 1 ELSE 0 END) AS '0_49',
+        SUM(CASE WHEN score >= 50 AND score < 60 THEN 1 ELSE 0 END) AS '50_59',
+        SUM(CASE WHEN score >= 60 AND score < 70 THEN 1 ELSE 0 END) AS '60_69',
+        SUM(CASE WHEN score >= 70 AND score < 80 THEN 1 ELSE 0 END) AS '70_79',
+        SUM(CASE WHEN score >= 80 THEN 1 ELSE 0 END) AS '80_100',
+        COUNT(*) AS total
        FROM quiz_attempt qa
        JOIN quiz q ON q.quiz_id = qa.quiz_id
        WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}`,
       [courseId, userId, ...range]
     );
 
-    // Submission rate: percentage of active enrollments that have at least
-    // one graded attempt.
     const [[submissionRate]] = await db.execute(
       `SELECT
-         (SELECT COUNT(*) FROM enrollment WHERE course_id=? AND status='active') AS active_count,
-         (SELECT COUNT(DISTINCT qa.user_id) FROM quiz_attempt qa
-          JOIN quiz q ON q.quiz_id = qa.quiz_id
-          WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}) AS submitted_count`,
+        (SELECT COUNT(*) FROM enrollment WHERE course_id=? AND status='active') AS active_count,
+        (SELECT COUNT(DISTINCT qa.user_id) FROM quiz_attempt qa
+         JOIN quiz q ON q.quiz_id = qa.quiz_id
+         WHERE q.course_id=? AND q.created_by=? AND qa.status='graded' ${rangeClause}) AS submitted_count`,
       [courseId, courseId, userId, ...range]
     );
 
-    // Completion stats (not date-filtered — enrollment completion is cumulative).
     const [[{ completed, total }]] = await db.execute(
       `SELECT
-         SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
-         COUNT(*) AS total
+        SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
+        COUNT(*) AS total
        FROM enrollment WHERE course_id=?`, [courseId]
     );
 
@@ -1560,7 +1444,6 @@ exports.getAnalytics = async (req, res) => {
   }
 };
 
-// ─── NOTIFICATIONS ───────────────────────────────────────
 exports.getNotifications = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -1579,8 +1462,6 @@ exports.markNotificationRead = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.user_id;
   try {
-    // Guard: only allow marking as read if the notification belongs to this
-    // instructor or is a role-broadcast for 'instructor'.
     const [result] = await db.execute(
       `UPDATE notification SET is_read=1
        WHERE notification_id=? AND (user_id=? OR target_role='instructor')`,

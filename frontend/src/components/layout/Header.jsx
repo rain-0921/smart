@@ -1,23 +1,6 @@
 import { token, fontMono, fontDisplay, styles } from '../../theme';
 import { Icon, Avatar } from '../shared';
 
-/**
- * Topbar — page title + eyebrow, search box (optional), action icons.
- *
- * Props:
- *   - eyebrow        {string}                small uppercase label above title
- *   - title          {string}
- *   - showSearch     {bool}                  render search input
- *   - searchValue    {string}
- *   - onSearchChange {fn}
- *   - searchPlaceholder {string}
- *   - onNotifications {fn}
- *   - notificationsBadge {bool}              show red dot on bell
- *   - onProfile        {fn}
- *   - user           {object}                for avatar
- *   - userPhoto      {string|null}
- *   - rightActions   {node}                  optional right-side action buttons
- */
 export default function Header({
   eyebrow,
   title,

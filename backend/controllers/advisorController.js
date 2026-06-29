@@ -1,6 +1,5 @@
 const db = require('../config/db');
 
-// ─── DASHBOARD ───────────────────────────────────────────
 exports.getDashboard = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -34,7 +33,6 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
-// ─── PROFILE ─────────────────────────────────────────────
 exports.getProfile = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -54,8 +52,6 @@ exports.updateProfile = async (req, res) => {
   const { username, phone_number, department } = req.body;
   if (!username) return res.status(400).json({ message: 'Username is required' });
 
-  // req.file is set by the `handlePhotoUpload` multer middleware in advisorRoutes.js.
-  // Format (JPG/PNG) and size (<=5MB) are already validated there per SDS 7.2.2.
   const photo_url = req.file ? `/uploads/profile-photos/${req.file.filename}` : null;
 
   try {
@@ -65,7 +61,6 @@ exports.updateProfile = async (req, res) => {
         [username, phone_number||null, department||null, photo_url, userId]
       );
     } else {
-      // No new photo uploaded — leave the existing photo_url untouched.
       await db.execute(
         `UPDATE user SET username=?, phone_number=?, department=? WHERE user_id=?`,
         [username, phone_number||null, department||null, userId]
@@ -81,7 +76,6 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-// ─── STUDENT PROFILES ────────────────────────────────────
 exports.getMyStudents = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -107,7 +101,6 @@ exports.getStudentDetail = async (req, res) => {
   const { studentId } = req.params;
   const advisorId = req.user.user_id;
   try {
-    // Verify this student belongs to this advisor
     const [check] = await db.execute(
       `SELECT user_id FROM student_profile WHERE user_id=? AND advisor_id=?`,
       [studentId, advisorId]
@@ -115,7 +108,6 @@ exports.getStudentDetail = async (req, res) => {
     if (check.length === 0)
       return res.status(403).json({ message: 'Student not assigned to you' });
 
-    // Profile
     const [profile] = await db.execute(
       `SELECT u.user_id, u.username, u.email, u.department, u.status, u.created_at,
               sp.academic_level, sp.programme, sp.average_score, sp.is_at_risk, sp.learning_preferences
@@ -124,7 +116,6 @@ exports.getStudentDetail = async (req, res) => {
        WHERE u.user_id=?`, [studentId]
     );
 
-    // Enrolled courses + progress
     const [courses] = await db.execute(
       `SELECT c.title, c.course_id, e.status AS enrollment_status,
               e.completion_percent, e.enrolled_at,
@@ -136,7 +127,6 @@ exports.getStudentDetail = async (req, res) => {
        ORDER BY e.enrolled_at DESC`, [studentId]
     );
 
-    // Quiz history
     const [quizHistory] = await db.execute(
       `SELECT qa.score, qa.status, qa.created_at,
               q.title AS quiz_title, c.title AS course_title
@@ -147,7 +137,6 @@ exports.getStudentDetail = async (req, res) => {
        ORDER BY qa.created_at DESC LIMIT 10`, [studentId]
     );
 
-    // Activity log
     const [activityLog] = await db.execute(
       `SELECT activity_type, description, created_at
        FROM activity_log WHERE user_id=?
@@ -165,7 +154,6 @@ exports.getStudentDetail = async (req, res) => {
   }
 };
 
-// ─── MONITOR PROGRESS ────────────────────────────────────
 exports.getStudentProgress = async (req, res) => {
   const advisorId = req.user.user_id;
   try {
@@ -190,7 +178,6 @@ exports.getStudentProgress = async (req, res) => {
   }
 };
 
-// ─── GRADES & ACADEMIC RECORDS ───────────────────────────
 exports.getStudentGrades = async (req, res) => {
   const { studentId } = req.params;
   const advisorId = req.user.user_id;
@@ -213,7 +200,6 @@ exports.getStudentGrades = async (req, res) => {
        ORDER BY qa.created_at DESC`, [studentId]
     );
 
-    // Academic history: enrolment/course-level record (required by SDS 2.4.4 — "course grades, GPA, and academic history")
     const [academicHistory] = await db.execute(
       `SELECT c.title AS course_title, e.status AS enrollment_status,
               e.completion_percent, e.enrolled_at, e.completed_at
@@ -235,10 +221,9 @@ exports.getStudentGrades = async (req, res) => {
   }
 };
 
-// ─── GENERATE REPORTS ────────────────────────────────────
 exports.generateReport = async (req, res) => {
   const advisorId = req.user.user_id;
-  const { type } = req.query; // 'progress' or 'academic'
+  const { type } = req.query;
   try {
     if (type === 'academic') {
       const [report] = await db.execute(
@@ -256,7 +241,6 @@ exports.generateReport = async (req, res) => {
       return res.json({ type: 'Academic Summary Report', data: report });
     }
 
-    // Progress report (default)
     const [report] = await db.execute(
       `SELECT u.username, u.email, sp.programme, sp.average_score,
               COUNT(DISTINCT e.course_id) AS total_courses,
@@ -278,16 +262,12 @@ exports.generateReport = async (req, res) => {
   }
 };
 
-// Reuse adminController's toCsvValue helper. Defined locally so the advisor
-// controller stays self-contained.
 function toCsvValue(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// Stream the currently visible report as a downloadable CSV file. Mirrors the
-// generateReport query so the file matches what the advisor sees on screen.
 exports.exportReport = async (req, res) => {
   const advisorId = req.user.user_id;
   const type = req.query.type || 'progress';
@@ -346,7 +326,6 @@ exports.exportReport = async (req, res) => {
   }
 };
 
-// ─── NOTIFICATIONS ───────────────────────────────────────
 exports.getNotifications = async (req, res) => {
   const userId = req.user.user_id;
   try {
@@ -365,9 +344,6 @@ exports.markNotificationRead = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.user_id;
   try {
-    // Only allow marking as read if it's this advisor's own notification, or a
-    // broadcast-style notification for the 'advisor' role — matches the same
-    // scope used in getNotifications above.
     const [result] = await db.execute(
       `UPDATE notification SET is_read=1
        WHERE notification_id=? AND (user_id=? OR target_role='advisor')`,

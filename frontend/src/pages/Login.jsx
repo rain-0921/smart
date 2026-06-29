@@ -3,9 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { loginUser } from '../services/api';
 
-/* ════════════════════════════════════════════════════════════
-   DESIGN TOKENS — matches all dashboard pages
-   ════════════════════════════════════════════════════════════ */
 const token = {
   paper:      '#F6F4EE',
   surface:    '#FFFFFF',
@@ -28,7 +25,6 @@ const fontDisplay = "'Lora', Georgia, serif";
 const fontBody    = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
 const fontMono    = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
 
-/* ── GlobalStyle: fonts + CSS-only features ── */
 function GlobalStyle() {
   return (
     <style>{`
@@ -73,7 +69,6 @@ function GlobalStyle() {
   );
 }
 
-/* ── Inline SVG icons ── */
 function Icon({ name, size = 18, color = 'currentColor' }) {
   const c = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
   switch (name) {
@@ -121,12 +116,10 @@ function Login() {
     <div className="login-root" style={styles.root}>
       <GlobalStyle />
 
-      {/* Decorative background orbs */}
       <div className="login-bg-orb" style={{ ...styles.orb, top: '-10%', left: '-8%', width: 480, height: 480, background: `${token.brassSoft}` }} />
       <div className="login-bg-orb" style={{ ...styles.orb, bottom: '-15%', right: '-10%', width: 560, height: 560, background: `${token.indigoSoft}`, animationDelay: '-4s' }} />
 
       <div className="login-card" style={styles.card}>
-        {/* Brand header */}
         <div style={styles.brandWrap}>
           <div style={styles.brandIcon}>
             <span style={{ fontFamily: fontDisplay, fontStyle: 'italic', fontWeight: 600, color: token.brass, fontSize: 18 }}>S</span>
@@ -150,7 +143,6 @@ function Login() {
         )}
 
         <form onSubmit={handleSubmit} noValidate>
-          {/* Email field */}
           <div style={styles.field}>
             <label style={styles.label}>
               <Icon name="mail" size={13} color={token.inkSoft} />
@@ -168,7 +160,6 @@ function Login() {
             />
           </div>
 
-          {/* Password field */}
           <div style={styles.field}>
             <label style={styles.label}>
               <Icon name="lock" size={13} color={token.inkSoft} />

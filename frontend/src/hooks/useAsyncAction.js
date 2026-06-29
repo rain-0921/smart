@@ -1,15 +1,5 @@
 import { useState, useCallback } from 'react';
 
-/**
- * useAsyncAction — fire-and-forget action with loading + error state.
- *
- * Usage:
- *   const { run, loading, error } = useAsyncAction();
- *   const handleSave = () => run(() => studentEnroll({ course_id }), {
- *     onSuccess: () => showAlert('Enrolled!'),
- *     onError:   (e) => showAlert(e.response?.data?.message || 'Failed'),
- *   });
- */
 export default function useAsyncAction() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);

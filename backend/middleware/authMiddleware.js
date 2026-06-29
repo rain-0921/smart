@@ -16,7 +16,6 @@ exports.protect = (req, res, next) => {
   }
 };
 
-// Only allow specific roles
 exports.authorize = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {

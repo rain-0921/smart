@@ -1,16 +1,11 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 
-// ─── SHARED VALIDATION HELPERS ─────────────────────────
-
 const VALID_ROLES  = ['student', 'instructor', 'advisor', 'admin'];
 const VALID_STATUS = ['active', 'inactive', 'suspended'];
 const ENROLLMENT_STATUS = ['active', 'completed', 'dropped', 'suspended'];
 const COURSE_STATUS = ['draft', 'published', 'archived'];
 
-// Coerce any incoming scheduled_at into a value safe to bind: only accept
-// strings, trim empties to null. Coercing a Date or other type to a string
-// would corrupt the SQL binding — guard against that (BUG-18).
 function normaliseScheduledAt(v) {
   if (v === null || v === undefined) return null;
   if (typeof v !== 'string') return null;
@@ -18,13 +13,10 @@ function normaliseScheduledAt(v) {
   return trimmed === '' ? null : trimmed;
 }
 
-// Email must end with @smis.edu for student accounts.
 function isSmisStudentEmail(email) {
   return typeof email === 'string' && /^[^@\s]+@smis\.edu$/.test(email);
 }
 
-// Department validation: must (a) exist in the distinct list and (b) be
-// non-empty when supplied. Empty/blank is treated as "no department" (null).
 async function isValidDepartment(department) {
   if (department === null || department === undefined) return true;
   if (typeof department !== 'string') return false;
@@ -36,9 +28,6 @@ async function isValidDepartment(department) {
   return rows.map(r => r.department).includes(trimmed);
 }
 
-// ─── DEPARTMENTS ──────────────────────────────────────────
-
-// Returns all distinct non-null department values already in use.
 exports.getDepartments = async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -50,13 +39,10 @@ exports.getDepartments = async (req, res) => {
   }
 };
 
-// ─── USERS ───────────────────────────────────────────────
-
-// Get all users
 exports.getAllUsers = async (req, res) => {
   try {
     const [users] = await db.execute(
-      `SELECT user_id, username, email, role, department, 
+      `SELECT user_id, username, email, role, department,
               phone_number, status, created_at, photo_url
        FROM user ORDER BY created_at DESC`
     );
@@ -66,7 +52,6 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// Add new user
 exports.addUser = async (req, res) => {
   const { username, email, password, role, department, phone_number } = req.body;
   if (!username || !email || !password || !role) {
@@ -75,18 +60,15 @@ exports.addUser = async (req, res) => {
   if (!VALID_ROLES.includes(role)) {
     return res.status(400).json({ message: `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}` });
   }
-  // Students must use a smis.edu email
   if (role === 'student' && !isSmisStudentEmail(email)) {
     return res.status(400).json({ message: 'Student email must end with @smis.edu' });
   }
-  // Phone must contain at least one digit (BUG-3 — previous regex matched '+' alone).
   if (phone_number && phone_number.trim() !== '' && !/^\+?[\d\s\-]+$/.test(phone_number)) {
     return res.status(400).json({ message: 'Phone number can only contain digits, spaces, hyphens and leading +' });
   }
   if (phone_number && phone_number.trim() !== '' && !/\d/.test(phone_number)) {
     return res.status(400).json({ message: 'Phone number must contain at least one digit' });
   }
-  // Department must be from the distinct list for ANY role with a department (BUG-2).
   if (department && department.trim() !== '') {
     let ok;
     try { ok = await isValidDepartment(department); }
@@ -125,7 +107,6 @@ exports.addUser = async (req, res) => {
   }
 };
 
-// Edit user
 exports.editUser = async (req, res) => {
   const { id } = req.params;
   const { username, email, role, department, phone_number, status } = req.body;
@@ -142,7 +123,6 @@ exports.editUser = async (req, res) => {
   if (!VALID_STATUS.includes(status)) {
     return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID_STATUS.join(', ')}` });
   }
-  // BUG-6: students must keep a smis.edu email even on edit.
   if (role === 'student' && !isSmisStudentEmail(email)) {
     return res.status(400).json({ message: 'Student email must end with @smis.edu' });
   }
@@ -154,7 +134,6 @@ exports.editUser = async (req, res) => {
   }
 
   try {
-    // BUG-4: load current row + prevent self-edit demotion/suspension (AUTH-1).
     const [[target]] = await db.execute(
       'SELECT user_id, role, status FROM user WHERE user_id=?', [targetId]
     );
@@ -165,7 +144,6 @@ exports.editUser = async (req, res) => {
       return res.status(400).json({ message: 'You cannot edit your own account here' });
     }
     if (target.role === 'admin' && status !== 'active') {
-      // Make sure we don't lock out the system.
       const [activeAdmins] = await db.execute(
         "SELECT user_id FROM user WHERE role='admin' AND status='active'"
       );
@@ -201,7 +179,6 @@ exports.editUser = async (req, res) => {
   }
 };
 
-// Deactivate user — same last-admin guard
 exports.deactivateUser = async (req, res) => {
   const { id } = req.params;
   const targetId = Number(id);
@@ -239,8 +216,6 @@ exports.deactivateUser = async (req, res) => {
   }
 };
 
-// ─── COURSES ─────────────────────────────────────────────
-
 exports.getAllCourses = async (req, res) => {
   try {
     const [courses] = await db.execute(
@@ -265,7 +240,6 @@ exports.addCourse = async (req, res) => {
   if (!Number.isInteger(instructorId) || instructorId <= 0) {
     return res.status(400).json({ message: 'instructor_id must be a positive integer' });
   }
-  // BUG-8: instructor must exist with role=instructor AND status=active.
   try {
     const [rows] = await db.execute(
       "SELECT user_id FROM user WHERE user_id=? AND role='instructor' AND status='active'", [instructorId]
@@ -338,8 +312,6 @@ exports.archiveCourse = async (req, res) => {
   }
 };
 
-// ─── ENROLLMENTS ─────────────────────────────────────────
-
 exports.getAllEnrollments = async (req, res) => {
   try {
     const [enrollments] = await db.execute(
@@ -369,7 +341,6 @@ exports.addEnrollment = async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // BUG-10: validate student + course statuses.
     const [students] = await conn.execute(
       "SELECT user_id FROM user WHERE user_id=? AND role='student' AND status='active'", [userId]
     );
@@ -385,7 +356,6 @@ exports.addEnrollment = async (req, res) => {
       return res.status(404).json({ message: 'Course not found or not open for enrollment' });
     }
 
-    // BUG-14: lock the (user_id, course_id) row to prevent duplicate-enroll race.
     const [existing] = await conn.execute(
       "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? FOR UPDATE", [userId, courseId]
     );
@@ -410,8 +380,6 @@ exports.addEnrollment = async (req, res) => {
   }
 };
 
-// Edit enrollment — status is enum-validated (BUG-11). When setting
-// 'completed', also auto-fill completed_at and completion_percent (BUG-13).
 exports.editEnrollment = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -455,11 +423,6 @@ exports.dropEnrollment = async (req, res) => {
   }
 };
 
-// ─── NOTIFICATIONS ───────────────────────────────────────
-
-// Get all notifications (admin view), newest first.
-// Adds an explicit `delivery_status` (sent / scheduled / draft) so the frontend
-// no longer has to infer status from scheduled_at — matches spec UC 2.3.6.
 exports.getAllNotifications = async (req, res) => {
   try {
     const [notifications] = await db.execute(
@@ -482,24 +445,12 @@ exports.getAllNotifications = async (req, res) => {
   }
 };
 
-// Create notification — four target modes:
-//   1. user_id                  → single specific recipient
-//   2. target_role              → all active users with that role
-//   3. target_all = true        → all active users on the platform
-//   4. course_id                → all active students enrolled in that course
-//
-// Supported notification types: announcement | deadline | quiz_score | admin_broadcast
-//
-// IMPORTANT: notification.user_id has a real FK to user(user_id) (ON DELETE CASCADE),
-// so we cannot insert a sentinel like 0. We always fan out into one row per recipient.
 exports.createNotification = async (req, res) => {
   const { title, message, type, target_role, user_id, course_id, target_all, scheduled_at } = req.body;
 
   if (!title || !message) {
     return res.status(400).json({ message: 'Title and message are required' });
   }
-  // BUG-16: more than one targeting mode → reject with 400 (instead of
-  // silently letting precedence decide).
   const targetModes = [user_id, target_role, course_id, target_all].filter(v => v !== undefined && v !== null && v !== '');
   if (targetModes.length === 0) {
     return res.status(400).json({
@@ -511,14 +462,11 @@ exports.createNotification = async (req, res) => {
       message: 'Specify exactly one target mode: user_id, target_role, course_id, or target_all'
     });
   }
-  // Normalise notification type — default to admin_broadcast if not provided or invalid
   const VALID_TYPES = ['announcement', 'deadline', 'quiz_score', 'admin_broadcast'];
   const notifType = type && VALID_TYPES.includes(type) ? type : 'admin_broadcast';
 
-  // BUG-18: never call .trim() on a non-string (e.g. Date object).
   const scheduledAt = normaliseScheduledAt(scheduled_at);
 
-  // Helper: bulk-insert one notification row per recipient
   const fanOut = async (recipients, type, targetRole = null) => {
     if (recipients.length === 0) return 0;
     const values = recipients.map(r => [r.user_id, title, message, type, targetRole, scheduledAt]);
@@ -532,8 +480,6 @@ exports.createNotification = async (req, res) => {
 
   try {
     if (user_id) {
-      // ── Mode 1: single recipient ───────────────────────────────────────────
-      // BUG-15: validate recipient existence + active status.
       const userId = Number(user_id);
       if (!Number.isInteger(userId) || userId <= 0) {
         return res.status(400).json({ message: 'user_id must be a positive integer' });
@@ -552,7 +498,6 @@ exports.createNotification = async (req, res) => {
       res.status(201).json({ message: 'Notification created successfully', recipients: 1 });
 
     } else if (target_role) {
-      // ── Mode 2: role broadcast ─────────────────────────────────────────────
       if (!VALID_ROLES.includes(target_role)) {
         return res.status(400).json({ message: `Invalid target_role. Must be one of: ${VALID_ROLES.join(', ')}` });
       }
@@ -566,7 +511,6 @@ exports.createNotification = async (req, res) => {
       res.status(201).json({ message: 'Notification created successfully', recipients: count });
 
     } else if (target_all) {
-      // ── Mode 3: all-users broadcast ────────────────────────────────────────
       const [recipients] = await db.execute(
         `SELECT user_id FROM user WHERE status='active'`
       );
@@ -577,7 +521,6 @@ exports.createNotification = async (req, res) => {
       res.status(201).json({ message: 'Notification sent to all users', recipients: count });
 
     } else if (course_id) {
-      // ── Mode 4: course broadcast (all active students enrolled in a course) ─
       const courseId = Number(course_id);
       if (!Number.isInteger(courseId) || courseId <= 0) {
         return res.status(400).json({ message: 'course_id must be a positive integer' });
@@ -613,10 +556,6 @@ exports.createNotification = async (req, res) => {
   }
 };
 
-// Edit notification — only allowed if not yet sent
-// "Not yet sent" = scheduled_at IS NULL OR scheduled_at > NOW()
-// i.e. drafts (send-now pending) and future-scheduled ones. Sent notifications
-// cannot be edited.
 exports.editNotification = async (req, res) => {
   const { id } = req.params;
   const { title, message, scheduled_at } = req.body;
@@ -638,7 +577,6 @@ exports.editNotification = async (req, res) => {
     if (!existing) {
       return res.status(404).json({ message: 'Notification not found' });
     }
-    // Edit only drafts (IS NULL) AND future-scheduled. Already-sent rows immutable.
     const scheduled = existing.scheduled_at;
     const isDraft = scheduled === null;
     const isFuture = scheduled !== null && new Date(scheduled) > new Date();
@@ -663,7 +601,6 @@ exports.editNotification = async (req, res) => {
   }
 };
 
-// Delete notification by id
 exports.deleteNotification = async (req, res) => {
   const { id } = req.params;
   const notifId = Number(id);
@@ -683,14 +620,6 @@ exports.deleteNotification = async (req, res) => {
   }
 };
 
-// ─── SHARED HELPERS (reports + logs) ─────────────────────
-// (normaliseScheduledAt and isValidDepartment live at the top of the file.)
-
-// Validate a YYYY-MM-DD string and build a date-range WHERE fragment on `column`.
-// Returns { clause, params }; clause is '' when no valid dates are supplied.
-// BUG-22: rejects inverted ranges (start > end) at the source.
-// BUG-23: capping to "today" is delegated to SQL via NOW() — JS date is
-// timezone-naive and can be off by a day.
 function buildDateRange(column, startDate, endDate) {
   const clauses = [];
   const params = [];
@@ -707,11 +636,6 @@ function buildDateRange(column, startDate, endDate) {
   return { clause: clauses.join(' AND '), params };
 }
 
-// ─── REPORTS ─────────────────────────────────────────────
-// Spec 7.3.4 (AdminViewReports): display available report types, accept a report
-// type + time period, query for data, show "No data available" when empty, then
-// generate and display the report. (Save-to-DB intentionally omitted per request.)
-
 const REPORT_TYPES = [
   { key: 'summary',            label: 'Platform Summary' },
   { key: 'student_enrollment', label: 'Student Enrollment' },
@@ -719,7 +643,6 @@ const REPORT_TYPES = [
   { key: 'user_registration',  label: 'User Registration' },
 ];
 
-// "DISPLAY available report types"
 exports.getReportTypes = async (req, res) => {
   res.json(REPORT_TYPES);
 };
@@ -752,7 +675,6 @@ exports.getReports = async (req, res) => {
       generatedAt: new Date().toISOString(),
     };
 
-    // "IF no data IS AVAILABLE THEN DISPLAY 'No data available for this report'"
     if (payload.isEmpty) {
       return res.json({ ...meta, isEmpty: true, message: 'No data available for this report', summary: {}, data: [] });
     }
@@ -762,8 +684,6 @@ exports.getReports = async (req, res) => {
   }
 };
 
-// Platform-wide overview (also feeds the dashboard). Time period scopes the
-// user/enrollment counts when supplied.
 async function buildSummaryReport(startDate, endDate) {
   const reg = buildDateRange('created_at', startDate, endDate);
   const enr = buildDateRange('enrolled_at', startDate, endDate);
@@ -783,7 +703,6 @@ async function buildSummaryReport(startDate, endDate) {
      GROUP BY c.course_id ORDER BY enrollments DESC LIMIT 5`
   );
 
-  // BUG-24: also treat top-courses emptiness as "empty summary".
   const hasCourses = courseStats.some(c => Number(c.enrollments) > 0);
   const isEmpty = (Number(totalUsers) === 0 && Number(totalEnrollments) === 0) || !hasCourses;
   return {
@@ -793,8 +712,6 @@ async function buildSummaryReport(startDate, endDate) {
   };
 }
 
-// Student enrollment report — one row per enrollment in the period, plus
-// status breakdown.
 async function buildEnrollmentReport(startDate, endDate) {
   const { clause, params } = buildDateRange('e.enrolled_at', startDate, endDate);
   const where = clause ? `WHERE ${clause}` : '';
@@ -813,8 +730,6 @@ async function buildEnrollmentReport(startDate, endDate) {
   return { isEmpty: false, summary: { total: rows.length, byStatus }, data: rows };
 }
 
-// Course performance report — per-course enrollment + completion stats. Time
-// period scopes which enrollments are counted.
 async function buildCoursePerformanceReport(startDate, endDate) {
   const { clause, params } = buildDateRange('e.enrolled_at', startDate, endDate);
   const join = clause ? `AND ${clause}` : '';
@@ -837,7 +752,6 @@ async function buildCoursePerformanceReport(startDate, endDate) {
   return { isEmpty: false, summary: { courses: rows.length }, data: rows };
 }
 
-// User registration report — new users in the period, grouped by role.
 async function buildUserRegistrationReport(startDate, endDate) {
   const { clause, params } = buildDateRange('created_at', startDate, endDate);
   const where = clause ? `WHERE ${clause}` : '';
@@ -851,7 +765,6 @@ async function buildUserRegistrationReport(startDate, endDate) {
   return { isEmpty: false, summary: { total: rows.length, byRole }, data: rows };
 }
 
-// Export a generated report as CSV (same types + filters as getReports).
 exports.exportReports = async (req, res) => {
   const type = req.query.type || 'summary';
   const { startDate, endDate } = req.query;
@@ -906,7 +819,6 @@ exports.exportReports = async (req, res) => {
         p
       );
     } else {
-      // summary — export course-level enrollment counts
       headers = ['title', 'enrollments'];
       const [courseStats] = await db.execute(
         `SELECT c.title, COUNT(e.enrollment_id) AS enrollments
@@ -941,12 +853,6 @@ exports.exportReports = async (req, res) => {
   }
 };
 
-// ─── ACTIVITY LOGS ───────────────────────────────────────
-// Spec 7.3.7 (AdminManageActivityLogs): list users with most recent activity,
-// filter by role / date range / activity type, drill into one user's full
-// history, show "No records found" when empty, and export the log as a file.
-
-// Map UI-friendly category labels → the raw activity_type values stored in DB.
 const ACTIVITY_CATEGORIES = {
   'Course Activity':     ['enroll', 'course_create'],
   'Learning Activity':   ['lesson_complete', 'quiz_submit', 'assignment_submit'],
@@ -955,8 +861,6 @@ const ACTIVITY_CATEGORIES = {
 };
 const ACTIVITY_CATEGORY_KEYS = Object.keys(ACTIVITY_CATEGORIES);
 
-// Build the shared WHERE clause for the log list / per-user / export queries.
-// Supports both a raw activityType (exact match) and an activityCategory (mapped to types).
 function buildActivityFilters(query) {
   const { role, activityType, activityCategory, startDate, endDate, userId } = query;
   const clauses = [];
@@ -964,7 +868,6 @@ function buildActivityFilters(query) {
   if (userId) { clauses.push('a.user_id = ?'); params.push(userId); }
   if (role)   { clauses.push('u.role = ?');   params.push(role); }
 
-  // Prefer category over raw type when both are supplied.
   const types = activityCategory && ACTIVITY_CATEGORIES[activityCategory]
     ? ACTIVITY_CATEGORIES[activityCategory]
     : activityType ? [activityType] : [];
@@ -983,7 +886,6 @@ function buildActivityFilters(query) {
   return { where, params };
 }
 
-// Filter options for the UI dropdowns (roles + activity categories).
 exports.getActivityFilters = async (req, res) => {
   res.json({
     roles:            ['student', 'instructor', 'advisor', 'admin'],
@@ -991,9 +893,6 @@ exports.getActivityFilters = async (req, res) => {
   });
 };
 
-// Initial screen: "a list of all users with their most recent tracked activities".
-// LEFT JOIN so users with zero activity still appear (BUG-29); tie-break on user_id
-// for deterministic ordering across pages.
 exports.getActivityUsers = async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -1018,8 +917,6 @@ exports.getActivityUsers = async (req, res) => {
   }
 };
 
-// Filtered log list, and — when `userId` is supplied — that user's full
-// chronological history (no row cap). Supports role / activityType / date range.
 exports.getActivityLogs = async (req, res) => {
   const { where, params } = buildActivityFilters(req.query);
   const hasUser = !!req.query.userId;
@@ -1035,7 +932,6 @@ exports.getActivityLogs = async (req, res) => {
        ORDER BY a.created_at DESC
        ${hasUser ? '' : `LIMIT ${limit}`}`;
     const [logs] = await db.execute(sql, params);
-    // "IF no records MATCH filter THEN DISPLAY 'No records found'"
     if (logs.length === 0) {
       return res.json({ isEmpty: true, message: 'No records found', data: [] });
     }
@@ -1045,15 +941,12 @@ exports.getActivityLogs = async (req, res) => {
   }
 };
 
-// Escape a single CSV field per RFC 4180.
 function toCsvValue(v) {
   if (v === null || v === undefined) return '';
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// Export the (optionally filtered) activity log as a downloadable CSV file.
-// "IF admin CLICKS Export THEN GENERATE report file ... DOWNLOAD report file".
 exports.exportActivityLogs = async (req, res) => {
   const { where, params } = buildActivityFilters(req.query);
   try {
@@ -1087,9 +980,6 @@ exports.exportActivityLogs = async (req, res) => {
   }
 };
 
-// ─── ADVISOR ASSIGNMENT ─────────────────────────────────
-
-// Get all students with their current advisor (for the admin assignment table).
 exports.getAllStudentsWithAdvisor = async (req, res) => {
   try {
     const [students] = await db.execute(
@@ -1107,7 +997,6 @@ exports.getAllStudentsWithAdvisor = async (req, res) => {
   }
 };
 
-// Get all advisors (active users with role='advisor') for the dropdown.
 exports.getAllAdvisors = async (req, res) => {
   try {
     const [advisors] = await db.execute(
@@ -1122,12 +1011,10 @@ exports.getAllAdvisors = async (req, res) => {
   }
 };
 
-// Assign (or reassign / unassign) an advisor to a student.
 exports.assignAdvisor = async (req, res) => {
   const { studentId } = req.params;
   const { advisor_id } = req.body;
 
-  // Normalise "clear/unset" to null.
   const newAdvisorId = (advisor_id === null || advisor_id === undefined || advisor_id === '') ? null : Number(advisor_id);
 
   if (advisor_id !== null && advisor_id !== undefined && advisor_id !== '' && !Number.isInteger(newAdvisorId)) {
@@ -1165,11 +1052,6 @@ exports.assignAdvisor = async (req, res) => {
   }
 };
 
-// ─── DASHBOARD ───────────────────────────────────────────
-
-// Single endpoint that bundles everything the Admin Dashboard page shows:
-// headline counts, user breakdown by role, top courses, and recent activity.
-// BUG-40: fan out via Promise.all instead of serialising 9 round-trips.
 exports.getDashboard = async (req, res) => {
   try {
     const [

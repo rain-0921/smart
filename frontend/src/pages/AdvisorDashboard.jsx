@@ -69,7 +69,7 @@ export default function AdvisorDashboard() {
     if (tab === 'progress')      withLoading('progress',       async () => setProgress((await advisorGetProgress()).data));
     if (tab === 'reports')       withLoading('reports',        async () => setReport((await advisorGetReport(reportType)).data));
     if (tab === 'notifications')  withLoading('notifications',  async () => setNotifications((await advisorGetNotifications()).data));
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const openStudent = async (student) => {
     try {

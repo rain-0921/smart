@@ -1,4 +1,3 @@
-// Shared design tokens — warm paper / ledger aesthetic used across all dashboards.
 export const token = {
   paper:      '#F6F4EE',
   surface:    '#FFFFFF',
@@ -55,7 +54,6 @@ export const fontDisplay = "'Lora', Georgia, serif";
 export const fontBody    = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
 export const fontMono    = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
 
-// Course gradient tones used across dashboard cards.
 export const courseTones = [
   {
     thumb:    'linear-gradient(135deg,#2454A6,#183E7F)',
@@ -83,7 +81,6 @@ export const courseTones = [
   },
 ];
 
-// Common style fragments — used to avoid recomputing style objects in render.
 export const styles = {
   appShell: { display: 'flex', minHeight: '100vh', background: token.paper },
 
@@ -204,7 +201,6 @@ export const styles = {
     padding: 20,
   },
 
-  // Modal overlay / box
   modalOverlay: {
     position: 'fixed', inset: 0,
     background: 'rgba(28,37,65,0.5)',
@@ -229,7 +225,6 @@ export const styles = {
     fontSize: 20, color: token.inkFaint, padding: 4, lineHeight: 1,
   },
 
-  // Status pill backgrounds
   statusPill: (kind) => ({
     background:
       kind === 'good'      ? token.goodSoft  :

@@ -27,7 +27,6 @@ export default function StudentDashboard() {
   const { alert, showAlert } = useDashboardAlerts(3000);
   const [search, setSearch] = useState('');
 
-  // data
   const [dashboard, setDashboard] = useState(null);
   const [catalogue, setCatalogue] = useState([]);
   const [modules, setModules] = useState([]);
@@ -38,40 +37,30 @@ export default function StudentDashboard() {
   const [gradeDetail, setGradeDetail] = useState(null);
   const [gradeDetailLoading, setGradeDetailLoading] = useState(false);
 
-  // selected course context
   const [selectedCourse, setSelectedCourse] = useState(null);
 
-  // quiz state
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizResult, setQuizResult] = useState(null);
   const [timeLeft, setTimeLeft] = useState(null);
 
-  // lesson context panel
   const [selectedLesson, setSelectedLesson] = useState(null);
 
-  // Pending deep-link from a "Recommended Next Step" click. Once modules
-  // finish loading for the opened course, this effect resolves the focus
-  // target and selects the corresponding lesson.
   const [pendingFocus, setPendingFocus] = useState(null);
 
-  // assignment (file_upload) state
   const [assignmentData, setAssignmentData] = useState(null);
   const [assignmentFile, setAssignmentFile] = useState(null);
   const [assignmentNote, setAssignmentNote] = useState('');
   const [assignmentUploading, setAssignmentUploading] = useState(false);
 
-  // profile form
   const [profileForm, setProfileForm] = useState({});
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profile, setProfile] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const fileInputRef = useRef(null);
-  // Reference state vars to keep ESLint happy (they are used in callbacks/JSX)
   void [profile, fileInputRef];
 
-  // Load DM Sans/Serif fonts
   useEffect(() => {
     const existing = document.getElementById('sils-dashboard-fonts');
     if (existing) return;
@@ -82,14 +71,12 @@ export default function StudentDashboard() {
     document.head.appendChild(link);
   }, []);
 
-  // "Browse Courses" shortcut dispatched from lessons section
   useEffect(() => {
     const handler = () => setTab('courses');
     document.addEventListener('std-goto-courses', handler);
     return () => document.removeEventListener('std-goto-courses', handler);
   }, []);
 
-  // Timer for quiz — does NOT depend on quizAnswers to avoid resetting on every keystroke
   const quizAnswersRef = useRef(quizAnswers);
   quizAnswersRef.current = quizAnswers;
 
@@ -116,7 +103,6 @@ export default function StudentDashboard() {
     return () => clearTimeout(timer);
   }, [timeLeft, activeQuiz, showAlert]);
 
-  // Fetch data on tab change
   useEffect(() => {
     if (tab === 'dashboard') {
       studentGetDashboard().then(r => setDashboard(r.data)).catch(() => {});
@@ -130,11 +116,6 @@ export default function StudentDashboard() {
       studentGetProgress().then(r => setProgressData(r.data)).catch(() => {});
   }, [tab]);
 
-  // Load modules when course selected.
-  // `focus` is an optional { module_id, lesson_id } pair that, once the
-  // modules are fetched, will auto-open the matching lesson so the student
-  // lands exactly where the recommendation pointed (instead of just on the
-  // course outline).
   const openCourse = async (course, focus = null) => {
     if (!course.is_enrolled && course.is_enrolled !== undefined && course.is_enrolled < 1) {
       showAlert('Please enroll in this course first.', 'error');
@@ -168,27 +149,21 @@ export default function StudentDashboard() {
     } catch { showAlert('Failed to load course content', 'error'); }
   };
 
-  // Pending deep-link from a "Recommended Next Step" click. Once modules
-  // finish loading for the opened course, this effect resolves the focus
-  // target and selects the corresponding lesson.
   useEffect(() => {
     if (!pendingFocus || !selectedCourse || modules.length === 0) return;
     const { lesson_id, module_id } = pendingFocus;
 
-    // Prefer the exact lesson when we know its id.
     let targetLesson = null;
     let targetModule = null;
     for (const mod of modules) {
       const found = mod.lessons?.find(l => l.lesson_id === lesson_id);
       if (found) { targetLesson = found; targetModule = mod; break; }
     }
-    // Fallback: pick the first lesson of the target module.
     if (!targetLesson && module_id) {
       targetModule = modules.find(m => m.module_id === module_id) || null;
       targetLesson = targetModule?.lessons?.[0] || null;
     }
     if (targetLesson) {
-      // Log the deep-link so analytics reflect the click-through.
       studentLogActivity({
         activity_type: 'lesson_open',
         description: `Opened lesson from recommendation: ${targetLesson.title}`,
@@ -207,7 +182,6 @@ export default function StudentDashboard() {
       setActiveQuiz(null);
       setQuizResult(null);
       setAssignmentData(null);
-      // Smooth-scroll the lesson panel into view after React paints it.
       setTimeout(() => {
         const el = document.querySelector('.std-card');
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -216,9 +190,6 @@ export default function StudentDashboard() {
     setPendingFocus(null);
   }, [modules, pendingFocus, selectedCourse]);
 
-  // Continue from a "Recommended Next Step" entry.
-  //   - 'module' recommendations deep-link straight into the next lesson.
-  //   - 'quiz'   recommendations open the course, then start the quiz.
   const handleContinueRecommendation = async (rec) => {
     if (!rec) { setTab('lessons'); return; }
     const course = dashboard?.enrollments?.find(e => e.course_id === rec.course_id);
@@ -227,21 +198,16 @@ export default function StudentDashboard() {
       return;
     }
     if (rec.type === 'quiz') {
-      // Reuse the deadline flow — it already opens the course then starts the quiz.
       await openCourse(course);
       await handleStartQuiz(rec.quiz_id);
       return;
     }
-    // Default: 'module' — open the course and deep-link to the lesson.
     await openCourse(course, {
       module_id: rec.next_module_id,
       lesson_id: rec.next_lesson_id,
     });
   };
 
-  // Open a deadline straight from the dashboard — opens the course first,
-  // then immediately starts the quiz or assignment so the student lands in
-  // the right place without having to find it again in the lesson list.
   const handleOpenDeadline = async (deadline) => {
     const course = dashboard.enrollments.find(e => e.course_id === deadline.course_id);
     if (!course) {
@@ -256,7 +222,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Enroll
   const handleEnroll = async (courseId) => {
     try {
       await studentEnroll({ course_id: courseId });
@@ -267,7 +232,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Mark lesson complete
   const handleComplete = async (moduleId) => {
     try {
       await studentCompleteLesson(moduleId);
@@ -283,7 +247,6 @@ export default function StudentDashboard() {
     } catch { showAlert('Failed', 'error'); }
   };
 
-  // Start quiz
   const handleStartQuiz = async (quizId) => {
     try {
       const res = await studentStartQuiz(quizId);
@@ -298,7 +261,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Submit quiz
   const handleSubmitQuiz = async () => {
     try {
       const answers = Object.entries(quizAnswers).map(([question_id, user_answer]) => ({
@@ -312,7 +274,6 @@ export default function StudentDashboard() {
     } catch (e) { showAlert(e.response?.data?.message || 'Failed to submit quiz', 'error'); }
   };
 
-  // Open assignment
   const handleOpenAssignment = async (quizId) => {
     try {
       const res = await studentGetAssignment(quizId);
@@ -325,7 +286,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Submit assignment file
   const handleSubmitAssignment = async () => {
     if (!assignmentFile) { showAlert('Please select a file.', 'error'); return; }
     setAssignmentUploading(true);
@@ -347,7 +307,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Open grade detail
   const handleOpenGradeDetail = async (attemptId) => {
     setGradeDetailLoading(true);
     setGradeDetail(null);
@@ -361,7 +320,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Profile
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileData, setProfileData] = useState(null);
 
@@ -408,7 +366,6 @@ export default function StudentDashboard() {
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
   };
-  // eslint-disable-next-line no-unused-vars
   void onPhotoChange;
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview); }, [photoPreview]);
 
@@ -436,7 +393,6 @@ export default function StudentDashboard() {
     }
   };
 
-  // Notifications
   const markRead = async (id) => {
     await studentMarkRead(id);
     studentGetNotifications().then(r => setNotifications(r.data));
@@ -611,7 +567,6 @@ export default function StudentDashboard() {
             <Spinner label="Loading profile…" />
           ) : (
             <>
-              {/* Avatar + photo upload */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
                 {photoPreview || profile?.photo_url ? (
                   <img src={photoPreview || resolvePhoto(profile?.photo_url)} alt={profileForm.username}
@@ -631,7 +586,6 @@ export default function StudentDashboard() {
                 </div>
               </div>
 
-              {/* Read-only info */}
               <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
                 {[
                   { label: 'Email', value: profileData?.email || '—' },
