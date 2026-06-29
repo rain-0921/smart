@@ -1,6 +1,6 @@
-import { token, fontMono } from '../../../theme';
+import { token } from '../../../theme';
 import { Empty } from '../../../components/shared';
-import { card, cardTitle, table, th, td, btnPrimary, btnSmall } from '../components/styles';
+import { card, cardTitle, table, th, td, btnSmall } from '../components/styles';
 
 export default function AdminAdvisorAssignmentSection({ students, loading, onAssign }) {
   return (
