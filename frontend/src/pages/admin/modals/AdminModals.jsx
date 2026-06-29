@@ -4,7 +4,7 @@ import { Empty, Modal } from '../../../components/shared';
 import { formLabel, formInput, btnPrimary, table, th, td } from '../components/styles';
 
 const EMAIL_SMIS_REGEX = /^[^@\s]+@smis\.edu$/;
-const PHONE_REGEX = /^\+?[\d\s\-]*$/;
+const PHONE_REGEX = /^\+?[\d\s-]*$/;
 
 export function AdminUserModal({ editingUser, userForm, instructors, departments, onChange, onClose, onSubmit, onError }) {
   const [errors, setErrors] = useState({});

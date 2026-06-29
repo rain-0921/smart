@@ -140,7 +140,7 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
             value={quizForm.max_attempts} onChange={e => onChange({ ...quizForm, max_attempts: e.target.value })} />
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div>
           <label style={label}>Submission Type</label>
           <select className="ins-select" style={inputStyle}
@@ -155,15 +155,6 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
               style={inputStyle}
               value={quizForm.num_questions_per_attempt}
               onChange={e => onChange({ ...quizForm, num_questions_per_attempt: e.target.value })} />
-          </div>
-        )}
-        {quizForm.submission_type === 'file_upload' && (
-          <div>
-            <label style={label}>File Extension</label>
-            <input className="ins-input" type="text" placeholder="e.g. .pdf, .zip"
-              style={inputStyle}
-              value={quizForm.accepted_file_types || ''}
-              onChange={e => onChange({ ...quizForm, accepted_file_types: e.target.value })} />
           </div>
         )}
         <div>

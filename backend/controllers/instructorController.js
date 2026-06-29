@@ -481,6 +481,14 @@ exports.getCourseQuizzes = async (req, res) => {
                 q.num_questions_per_attempt, q.submission_type, q.created_at
        ORDER BY q.created_at DESC`, [courseId]
     );
+    // Normalize due_date to ISO-8601 UTC so the frontend can parse it
+    // without timezone ambiguity (a bare "YYYY-MM-DD HH:mm:ss" string would
+    // otherwise be interpreted as local time on the browser, shifting the date).
+    for (const q of quizzes) {
+      if (!q.due_date) continue;
+      if (q.due_date instanceof Date) q.due_date = q.due_date.toISOString();
+      else q.due_date = new Date(q.due_date + 'Z').toISOString();
+    }
     res.json(quizzes);
   } catch (error) {
     console.error('[getCourseQuizzes]', error.code, error.sqlMessage || error.message);

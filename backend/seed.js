@@ -1,483 +1,721 @@
 // SMIS Database Seed Script
-// Run: node seed.js
-// Requires: npm install mysql2 bcryptjs
+// Run:   node seed.js
+// Notes: Uses mysql2/promise and prefers the shared backend/config/db.js pool.
+//        Falls back to inline defaults when the config isn't available so this
+//        script can also be invoked with `node seed.js` from anywhere.
+//
+// Design choices
+// ──────────────
+//  • Single fixed timeline anchor T0 = "2026-06-01 09:00:00". Every created_at
+//    / enrolled_at / attempt is expressed as an offset from T0 so the demo
+//    always looks recent (Feb enrolments → Apr attempts → May activity).
+//  • INSERTs are batched into multi-row VALUES for speed and readability.
+//  • We DELETE rows (in FK-safe order) instead of TRUNCATE so AUTO_INCREMENT
+//    is preserved — keeps hard-coded ids in this script stable across runs
+//    and prevents new app-generated rows from colliding with seed ids.
+//  • `student_profile.average_score` and `is_at_risk` are recomputed at the
+//    end from quiz_attempt rows so the values match what studentController's
+//    submitQuiz would produce in production.
+//  • All demo passwords share the same shape: Admin@123 / Advisor@123 /
+//    Instr@123 / Student@123.
 
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 
-const DB_CONFIG = {
-  host: '127.0.0.1',
-  user: 'root',
-  password: '',
-  database: 'smis',
+let pool;
+try {
+  // eslint-disable-next-line global-require
+  const dbModule = require('./config/db');
+  // The project exports `pool.promise()` directly (a callable) or wraps it
+  // in `{ pool }`. Accept both shapes.
+  pool = dbModule && typeof dbModule.query === 'function' ? dbModule : dbModule.pool;
+  if (!pool || typeof pool.query !== 'function') throw new Error('invalid pool');
+} catch {
+  // Fallback for running `node seed.js` outside the Express loader.
+  pool = mysql.createPool({
+    host: '127.0.0.1',
+    user: 'root',
+    password: '',
+    database: 'smis',
+    waitForConnections: true,
+    connectionLimit: 4,
+  });
+}
+
+// ── Timeline anchor + helpers ────────────────────────────────────────────────
+const T0 = new Date('2026-06-01T09:00:00');
+
+const pad = (x) => String(x).padStart(2, '0');
+const fmt = (d) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+
+// D(n, h = 9, m = 0) → 'YYYY-MM-DD HH:MM:SS' for (T0 − n days) at h:m.
+// Use this anywhere a `datetime` column needs a literal timestamp.
+const D = (n, h = 9, m = 0) => {
+  const d = new Date(T0);
+  d.setDate(d.getDate() - n);
+  d.setHours(h, m, 0, 0);
+  return fmt(d);
 };
 
-async function seed() {
-  const db = await mysql.createConnection(DB_CONFIG);
-  console.log('Connected to database.');
+// startAt(...) returns a Date so callers can add/subtract minutes for end_time.
+const startAt = (n, h = 9, m = 0) => {
+  const d = new Date(T0);
+  d.setDate(d.getDate() - n);
+  d.setHours(h, m, 0, 0);
+  return d;
+};
+const addMin = (d, m) => {
+  const nd = new Date(d);
+  nd.setMinutes(nd.getMinutes() + m);
+  return nd;
+};
 
-  // Disable FK checks during seeding
-  await db.execute('SET FOREIGN_KEY_CHECKS = 0');
+const PASSWORD_PLAN = {
+  admin:      'Admin@123',
+  advisor:    'Advisor@123',
+  instructor: 'Instr@123',
+  student:    'Student@123',
+};
+
+// ── Bulk insert helper ───────────────────────────────────────────────────────
+async function insertRows(table, rows, columns) {
+  if (!rows.length) return;
+  const placeholders = rows
+    .map(() => `(${columns.map(() => '?').join(', ')})`)
+    .join(', ');
+  const sql = `INSERT INTO \`${table}\` (${columns.join(', ')}) VALUES ${placeholders}`;
+  const params = rows.flatMap((r) => columns.map((c) => r[c] ?? null));
+  await pool.query(sql, params);
+}
+
+// ── Main orchestrator ────────────────────────────────────────────────────────
+async function seed() {
+  console.log('🌱 SMIS seed starting…');
+  console.log(`   timeline anchor T0 = ${fmt(T0)}`);
+
+  const fkOrder = [
+    ['activity_log'],
+    ['notification'],
+    ['answer'],
+    ['quiz_attempt'],
+    ['quiz_feedback'],
+    ['question'],
+    ['quiz'],
+    ['module_progress'],
+    ['lesson'],
+    ['module'],
+    ['enrollment'],
+    ['course'],
+    ['instructor_profile'],
+    ['student_profile'],
+    ['user'],
+  ];
+
+  console.log('🧹 clearing existing rows (child → parent)…');
+  await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+  for (const [t] of fkOrder) {
+    await pool.query(`DELETE FROM \`${t}\``);
+  }
+  await pool.query('SET FOREIGN_KEY_CHECKS = 1');
 
   try {
-    const hash = (pw) => bcrypt.hashSync(pw, 10);
+    await seedUsers();
+    await seedInstructorProfiles();
+    await seedStudentProfiles();
+    await seedCourses();
+    await seedModules();
+    await seedLessons();
+    await seedEnrollments();
+    await seedModuleProgress();
+    await seedQuizzes();
+    await seedQuizFeedback();
+    await seedQuestions();
+    await seedQuizAttempts();
+    await seedAnswers();
+    await seedNotifications();
+    await seedActivityLog();
 
-    // ── 1. USER ──────────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `user`');
-    const users = [
-      // Admins
-      [1, 'admin01',      'admin01@smis.edu',       hash('Admin@123'),    'admin',      'Administration',   null, '+60111000001', 'active', '2025-01-01 08:00:00'],
-      // Advisors
-      [2, 'advisor01',    'advisor01@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  null, '+60111000002', 'active', '2025-01-05 08:00:00'],
-      [3, 'advisor02',    'advisor02@smis.edu',     hash('Advisor@123'),  'advisor',    'Student Affairs',  null, '+60111000003', 'active', '2025-01-05 08:30:00'],
-      // Instructors
-      [4, 'instructor01', 'instructor01@smis.edu',  hash('Instr@123'),    'instructor', 'Computer Science', null, '+60111000004', 'active', '2025-01-10 09:00:00'],
-      [5, 'instructor02', 'instructor02@smis.edu',  hash('Instr@123'),    'instructor', 'Mathematics',      null, '+60111000005', 'active', '2025-01-10 09:30:00'],
-      [6, 'instructor03', 'instructor03@smis.edu',  hash('Instr@123'),    'instructor', 'Data Science',     null, '+60111000006', 'active', '2025-01-11 09:00:00'],
-      // Students
-      [7,  'student01',   'student01@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null, '+60111000007', 'active', '2025-02-01 10:00:00'],
-      [8,  'student02',   'student02@smis.edu',     hash('Student@123'),  'student',    'Computer Science', null, '+60111000008', 'active', '2025-02-01 10:05:00'],
-      [9,  'student03',   'student03@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null, '+60111000009', 'active', '2025-02-02 10:00:00'],
-      [10, 'student04',   'student04@smis.edu',     hash('Student@123'),  'student',    'Mathematics',      null, '+60111000010', 'active', '2025-02-02 10:10:00'],
-      [11, 'student05',   'student05@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null, '+60111000011', 'active', '2025-02-03 10:00:00'],
-      [12, 'student06',   'student06@smis.edu',     hash('Student@123'),  'student',    'Data Science',     null, '+60111000012', 'active', '2025-02-03 10:15:00'],
-    ];
-    for (const u of users) {
-      await db.execute(
-        'INSERT INTO `user` (user_id,username,email,password_hash,role,department,photo_url,phone_number,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        u
-      );
-    }
-    console.log('✓ user');
+    // Mirrors the SQL studentController.submitQuiz runs at runtime — keeps
+    // dashboards consistent before any real student logs in.
+    await deriveStudentRiskFlags();
 
-    // ── 2. INSTRUCTOR_PROFILE ────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `instructor_profile`');
-    const instructorProfiles = [
-      [4, 'Software Engineering', 'Web Development, Algorithms, OOP',          'Mon/Wed 10:00-12:00'],
-      [5, 'Applied Mathematics',  'Calculus, Linear Algebra, Statistics',       'Tue/Thu 14:00-16:00'],
-      [6, 'Machine Learning',     'Data Mining, Deep Learning, Python for DS',  'Wed/Fri 09:00-11:00'],
-    ];
-    for (const p of instructorProfiles) {
-      await db.execute(
-        'INSERT INTO `instructor_profile` (user_id,specialization,subjects_taught,office_hours) VALUES (?,?,?,?)',
-        p
-      );
-    }
-    console.log('✓ instructor_profile');
-
-    // ── 3. STUDENT_PROFILE ───────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `student_profile`');
-    const studentProfiles = [
-      // user_id, academic_level, programme, learning_preferences, advisor_id, average_score, is_at_risk
-      [7,  'Year 2', 'Bachelor of Computer Science', 'Visual learner',   2, 87.50, 0],
-      [8,  'Year 1', 'Bachelor of Computer Science', 'Reading/writing',  2, 70.00, 0],
-      [9,  'Year 3', 'Bachelor of Mathematics',      'Hands-on practice',3, 93.75, 0],
-      [10, 'Year 2', 'Bachelor of Mathematics',      'Visual learner',   3, 47.50, 1],
-      [11, 'Year 1', 'Bachelor of Data Science',     'Mixed',            2, 80.00, 0],
-      [12, 'Year 3', 'Bachelor of Data Science',     'Reading/writing',  3, 90.00, 0],
-    ];
-    for (const p of studentProfiles) {
-      await db.execute(
-        'INSERT INTO `student_profile` (user_id,academic_level,programme,learning_preferences,advisor_id,average_score,is_at_risk) VALUES (?,?,?,?,?,?,?)',
-        p
-      );
-    }
-    console.log('✓ student_profile');
-
-    // ── 4. COURSE ────────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `course`');
-    const courses = [
-      // course_id, instructor_id, title, description, status, created_at
-      [1, 4, 'Web Development Fundamentals',  'HTML, CSS, JS basics for beginners.',           'published', '2025-02-01 08:00:00'],
-      [2, 4, 'Object-Oriented Programming',   'OOP principles using Java.',                    'published', '2025-02-05 08:00:00'],
-      [3, 5, 'Calculus I',                    'Limits, derivatives, and integrals.',           'published', '2025-02-03 08:00:00'],
-      [4, 5, 'Linear Algebra',                'Vectors, matrices, and transformations.',       'draft',     '2025-02-10 08:00:00'],
-      [5, 6, 'Introduction to Data Science',  'Python, pandas, and data visualisation.',      'published', '2025-02-07 08:00:00'],
-      [6, 6, 'Machine Learning Basics',        'Supervised and unsupervised learning.',        'archived',  '2024-08-01 08:00:00'],
-    ];
-    for (const c of courses) {
-      await db.execute(
-        'INSERT INTO `course` (course_id,instructor_id,title,description,status,created_at) VALUES (?,?,?,?,?,?)',
-        c
-      );
-    }
-    console.log('✓ course');
-
-    // ── 5. MODULE ────────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `module`');
-    const modules = [
-      // module_id, course_id, title, description, sort_order
-      [1,  1, 'Getting Started with HTML',      'Tags, elements, and document structure.', 1],
-      [2,  1, 'Styling with CSS',               'Selectors, box model, flexbox.',          2],
-      [3,  1, 'JavaScript Basics',              'Variables, loops, and functions.',        3],
-      [4,  2, 'Classes and Objects',            'Defining and using classes.',             1],
-      [5,  2, 'Inheritance and Polymorphism',   'Extending classes and overriding.',       2],
-      [6,  3, 'Limits and Continuity',          'Understanding limits.',                  1],
-      [7,  3, 'Differentiation',                'Rules and applications of derivatives.', 2],
-      [8,  5, 'Python for Data Science',        'NumPy and pandas essentials.',           1],
-      [9,  5, 'Data Visualisation',             'Matplotlib and Seaborn.',                2],
-      [10, 6, 'Regression Models',              'Linear and logistic regression.',        1],
-    ];
-    for (const m of modules) {
-      await db.execute(
-        'INSERT INTO `module` (module_id,course_id,title,description,sort_order) VALUES (?,?,?,?,?)',
-        m
-      );
-    }
-    console.log('✓ module');
-
-    // ── 6. LESSON ────────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `lesson`');
-    const lessons = [
-      // lesson_id, module_id, title, content_type, content_url, content_text, sort_order, duration_minutes, status
-
-      // Module 1 – Getting Started with HTML
-      [1,  1, 'What is HTML?',
-        'video',
-        'https://www.youtube.com/watch?v=qz0aGYrrlhU',  // HTML Full Course – freeCodeCamp
-        null, 1, 10, 'published'],
-
-      [2,  1, 'HTML Document Structure',
-        'text',
-        null,
-        'An HTML document begins with <!DOCTYPE html> which tells the browser this is an HTML5 document.\n\nThe basic structure consists of:\n• <html> — the root element that wraps all content\n• <head> — contains meta information (title, charset, links to CSS)\n• <body> — contains all visible page content\n\nExample:\n<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8">\n    <title>My First Page</title>\n  </head>\n  <body>\n    <h1>Hello, World!</h1>\n    <p>This is a paragraph.</p>\n  </body>\n</html>\n\nKey points:\n1. Tags are case-insensitive but lowercase is the convention.\n2. Most tags come in pairs: an opening tag and a closing tag.\n3. Self-closing tags like <br> and <img> do not need a closing tag.',
-        2, 5, 'published'],
-
-      // Module 2 – Styling with CSS
-      [3,  2, 'Introduction to CSS',
-        'video',
-        'https://www.youtube.com/watch?v=OXGznpKZ_sA',  // CSS Full Course – freeCodeCamp
-        null, 1, 12, 'published'],
-
-      [4,  2, 'CSS Box Model',
-        'pdf',
-        'https://www.w3.org/TR/CSS2/box.html',           // W3C official CSS box model spec (publicly accessible)
-        null, 2, 8, 'published'],
-
-      // Module 3 – JavaScript Basics
-      [5,  3, 'Variables and Data Types',
-        'video',
-        'https://www.youtube.com/watch?v=W6NZfCO5SIk',  // JavaScript Tutorial for Beginners – Programming with Mosh
-        null, 1, 15, 'published'],
-
-      // Module 4 – Classes and Objects (Java)
-      [6,  4, 'Defining a Class in Java',
-        'video',
-        'https://www.youtube.com/watch?v=IUqKuGNasdM',  // Java OOP – Bro Code
-        null, 1, 18, 'published'],
-
-      // Module 5 – Inheritance and Polymorphism
-      [7,  5, 'Inheritance in Java',
-        'text',
-        null,
-        'Inheritance allows a child class to acquire the properties and methods of a parent class using the "extends" keyword.\n\nExample:\npublic class Animal {\n    String name;\n    public void speak() {\n        System.out.println("Some sound");\n    }\n}\n\npublic class Dog extends Animal {\n    @Override\n    public void speak() {\n        System.out.println("Woof!");\n    }\n}\n\nKey concepts:\n• super keyword — calls the parent class constructor or method\n• @Override annotation — signals that a method is overriding a parent method\n• Polymorphism — a Dog object can be referred to as an Animal reference\n\nAnimal myDog = new Dog();\nmyDog.speak(); // prints "Woof!" — runtime polymorphism in action\n\nInheritance promotes code reuse and establishes an "is-a" relationship between classes.',
-        1, 10, 'published'],
-
-      // Module 6 – Limits and Continuity
-      [8,  6, 'Understanding Limits',
-        'pdf',
-        'https://tutorial.math.lamar.edu/pdf/Calculus_Cheat_Sheet_Limits.pdf',  // Paul Dawkins Calculus Cheat Sheet – publicly hosted
-        null, 1, 20, 'published'],
-
-      // Module 7 – Differentiation
-      [9,  7, 'Power Rule',
-        'video',
-        'https://www.youtube.com/watch?v=IvLpN1G1Ncg',  // Derivatives – The Organic Chemistry Tutor
-        null, 1, 12, 'published'],
-
-      // Module 8 – Python for Data Science
-      [10, 8, 'Intro to NumPy',
-        'video',
-        'https://www.youtube.com/watch?v=QUT1VHiLmmI',  // NumPy Tutorial – freeCodeCamp
-        null, 1, 20, 'published'],
-
-      // Module 9 – Data Visualisation
-      [11, 9, 'Matplotlib Basics',
-        'video',
-        'https://www.youtube.com/watch?v=3Xc3CA655Y4',  // Matplotlib Tutorial – Corey Schafer
-        null, 1, 15, 'published'],
-
-      // Module 10 – Regression Models
-      [12, 10, 'Linear Regression',
-        'text',
-        null,
-        'Linear regression models the linear relationship between a dependent variable (y) and one or more independent variables (x).\n\nSimple Linear Regression formula:\n  y = mx + b\n  where m = slope, b = y-intercept\n\nIn Python with scikit-learn:\nfrom sklearn.linear_model import LinearRegression\nimport numpy as np\n\nX = np.array([[1],[2],[3],[4],[5]])\ny = np.array([2, 4, 5, 4, 5])\n\nmodel = LinearRegression()\nmodel.fit(X, y)\nprint("Slope:", model.coef_)\nprint("Intercept:", model.intercept_)\nprint("Prediction for x=6:", model.predict([[6]]))\n\nKey metrics to evaluate the model:\n• R² Score — how well the line fits the data (1.0 = perfect)\n• Mean Squared Error (MSE) — average squared difference between predicted and actual\n• Root MSE (RMSE) — same as MSE but in original units\n\nAssumptions of linear regression:\n1. Linearity — relationship between X and y is linear\n2. Independence — observations are independent\n3. Homoscedasticity — constant variance of errors\n4. Normality — residuals are normally distributed',
-        1, 10, 'draft'],
-    ];
-    for (const l of lessons) {
-      await db.execute(
-        'INSERT INTO `lesson` (lesson_id,module_id,title,content_type,content_url,content_text,sort_order,duration_minutes,status) VALUES (?,?,?,?,?,?,?,?,?)',
-        l
-      );
-    }
-    console.log('✓ lesson');
-
-    // ── 7. ENROLLMENT ────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `enrollment`');
-    const enrollments = [
-      // enrollment_id, user_id, course_id, enrolled_at, status, completion_percent, completed_at
-      [1,  7,  1, '2025-02-10 09:00:00', 'active',    75.00, null],
-      [2,  7,  2, '2025-02-10 09:05:00', 'active',    40.00, null],
-      [3,  8,  1, '2025-02-11 10:00:00', 'active',    20.00, null],
-      [4,  9,  3, '2025-02-12 09:00:00', 'completed', 100.00,'2025-05-01 12:00:00'],
-      [5,  10, 3, '2025-02-12 09:10:00', 'active',    30.00, null],
-      [6,  11, 5, '2025-02-13 10:00:00', 'active',    60.00, null],
-      [7,  12, 5, '2025-02-13 10:15:00', 'active',    85.00, null],
-      [8,  12, 6, '2024-08-15 09:00:00', 'completed', 100.00,'2024-12-20 10:00:00'],
-      [9,  7,  5, '2025-02-14 10:00:00', 'active',    10.00, null],
-      [10, 11, 2, '2025-02-15 11:00:00', 'dropped',   5.00,  null],
-    ];
-    for (const e of enrollments) {
-      await db.execute(
-        'INSERT INTO `enrollment` (enrollment_id,user_id,course_id,enrolled_at,status,completion_percent,completed_at) VALUES (?,?,?,?,?,?,?)',
-        e
-      );
-    }
-    console.log('✓ enrollment');
-
-    // ── 8. MODULE_PROGRESS ───────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `module_progress`');
-    const moduleProgress = [
-      // user_id, module_id, status, completion_percentage, last_accessed, completed_at
-      [7,  1, 'completed',   100.00, '2025-03-01 10:00:00', '2025-03-01 10:00:00'],
-      [7,  2, 'completed',   100.00, '2025-03-10 11:00:00', '2025-03-10 11:00:00'],
-      [7,  3, 'in_progress',  50.00, '2025-03-15 14:00:00', null],
-      [8,  1, 'in_progress',  40.00, '2025-03-05 09:00:00', null],
-      [9,  6, 'completed',   100.00, '2025-04-01 10:00:00', '2025-04-01 10:00:00'],
-      [9,  7, 'completed',   100.00, '2025-04-15 11:00:00', '2025-04-15 11:00:00'],
-      [10, 6, 'in_progress',  30.00, '2025-03-20 10:00:00', null],
-      [11, 8, 'completed',   100.00, '2025-03-25 09:00:00', '2025-03-25 09:00:00'],
-      [11, 9, 'in_progress',  60.00, '2025-04-05 10:00:00', null],
-      [12, 8, 'completed',   100.00, '2025-03-20 08:00:00', '2025-03-20 08:00:00'],
-      [12, 9, 'completed',   100.00, '2025-04-01 09:00:00', '2025-04-01 09:00:00'],
-    ];
-    for (const mp of moduleProgress) {
-      await db.execute(
-        'INSERT INTO `module_progress` (user_id,module_id,status,completion_percentage,last_accessed,completed_at) VALUES (?,?,?,?,?,?)',
-        mp
-      );
-    }
-    console.log('✓ module_progress');
-
-    // ── 9. QUIZ ──────────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `quiz`');
-    const quizzes = [
-      // quiz_id, course_id, module_id, created_by, title, description, status, due_date, time_limit_minutes, max_attempts, randomize_questions, num_questions_per_attempt, submission_type, created_at
-      [1, 1, 1, 4, 'HTML Basics Quiz',           'Test your HTML knowledge.',         'published', '2025-04-01 23:59:00', 20, 2, 0, null, 'online_quiz', '2025-03-01 09:00:00'],
-      [2, 1, 2, 4, 'CSS Fundamentals Quiz',      'Test your CSS skills.',             'published', '2025-04-15 23:59:00', 30, 1, 1, 3,   'online_quiz', '2025-03-10 09:00:00'],
-      [3, 2, 4, 4, 'OOP Classes Assignment',     'Submit your Java assignment.',       'published', '2025-04-20 23:59:00', null,1, 0, null,'file_upload',  '2025-03-15 09:00:00'],
-      [4, 3, 6, 5, 'Limits Quiz',                'Test understanding of limits.',     'published', '2025-04-10 23:59:00', 25, 2, 0, null, 'online_quiz', '2025-03-05 09:00:00'],
-      [5, 5, 8, 6, 'NumPy & Pandas Quiz',        'Assess Python data skills.',        'published', '2025-04-25 23:59:00', 30, 1, 1, 4,   'online_quiz', '2025-03-20 09:00:00'],
-      [6, 5, 9, 6, 'Data Viz Assignment',        'Submit your chart analysis.',       'archived',  '2025-03-30 23:59:00', null,1, 0, null,'file_upload',  '2025-03-01 09:00:00'],
-    ];
-    for (const q of quizzes) {
-      await db.execute(
-        'INSERT INTO `quiz` (quiz_id,course_id,module_id,created_by,title,description,status,due_date,time_limit_minutes,max_attempts,randomize_questions,num_questions_per_attempt,submission_type,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        q
-      );
-    }
-    console.log('✓ quiz');
-
-    // ── 10. QUIZ_FEEDBACK ────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `quiz_feedback`');
-    const quizFeedback = [
-      [1, 1,  0.00, 49.99, 'Keep practising — review the HTML basics module.'],
-      [2, 1, 50.00, 74.99, 'Good effort! A few more reviews and you\'ll ace it.'],
-      [3, 1, 75.00,100.00, 'Excellent! You have a solid grasp of HTML.'],
-      [4, 4,  0.00, 49.99, 'Review the limits chapter before your next attempt.'],
-      [5, 4, 50.00,100.00, 'Well done on the limits quiz!'],
-      [6, 5,  0.00, 59.99, 'Revisit NumPy and Pandas fundamentals.'],
-      [7, 5, 60.00,100.00, 'Great work on the Python data quiz!'],
-    ];
-    for (const f of quizFeedback) {
-      await db.execute(
-        'INSERT INTO `quiz_feedback` (quiz_feedback_id,quiz_id,min_score,max_score,feedback_message) VALUES (?,?,?,?,?)',
-        f
-      );
-    }
-    console.log('✓ quiz_feedback');
-
-    // ── 11. QUESTION ────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `question`');
-    const questions = [
-      // question_id, quiz_id, question_type, question_text, options (JSON), correct_answer, points, improvement_tip, sort_order
-
-      // Quiz 1 – HTML Basics
-      [1,  1, 'mcq',          'What does HTML stand for?',
-        JSON.stringify(['HyperText Markup Language','HyperText Machine Language','HighText Markup Language','None of the above']),
-        'HyperText Markup Language', 2, 'HTML stands for HyperText Markup Language.', 1],
-      [2,  1, 'fill_blank',   'The ___ tag is used to define the largest heading in HTML.', null, 'h1', 2, 'Headings go from <h1> (largest) to <h6> (smallest).', 2],
-      [3,  1, 'short_answer', 'Explain the purpose of the <!DOCTYPE html> declaration.', null, 'It defines the document type and version of HTML.', 3, 'DOCTYPE tells the browser which version of HTML to use.', 3],
-
-      // Quiz 2 – CSS Fundamentals
-      [4,  2, 'mcq',          'Which CSS property controls text size?',
-        JSON.stringify(['font-size','text-size','font-weight','text-style']),
-        'font-size', 2, 'Use font-size to control text size in CSS.', 1],
-      [5,  2, 'mcq',          'What does the CSS box model include?',
-        JSON.stringify(['Margin, Border, Padding, Content','Margin, Font, Padding, Content','Border, Font, Margin, Layout','None of the above']),
-        'Margin, Border, Padding, Content', 2, 'The box model consists of Margin, Border, Padding, and Content.', 2],
-      [6,  2, 'fill_blank',   'To center a block element horizontally, set margin to ___.', null, 'auto', 2, 'Use margin: auto with a defined width to center elements.', 3],
-
-      // Quiz 4 – Limits
-      [7,  4, 'mcq',          'What is the limit of f(x) = x² as x → 3?',
-        JSON.stringify(['6','9','3','0']),
-        '9', 3, 'Substitute x = 3 directly: 3² = 9.', 1],
-      [8,  4, 'short_answer', 'Define the concept of a limit in calculus.', null, 'A limit describes the value a function approaches as the input approaches a point.', 3, 'Think of a limit as the expected value, not necessarily the actual value.', 2],
-      [9,  4, 'fill_blank',   'A function is continuous at x = a if the limit as x → a equals ___.', null, 'f(a)', 2, 'Continuity requires the limit and function value to match.', 3],
-
-      // Quiz 5 – NumPy & Pandas
-      [10, 5, 'mcq',          'Which function creates a NumPy array?',
-        JSON.stringify(['np.array()','np.create()','np.make()','np.list()']),
-        'np.array()', 2, 'Use np.array() to create arrays in NumPy.', 1],
-      [11, 5, 'mcq',          'Which pandas object is used for tabular data?',
-        JSON.stringify(['DataFrame','Series','Array','Matrix']),
-        'DataFrame', 2, 'DataFrames are 2D labelled data structures in pandas.', 2],
-      [12, 5, 'short_answer', 'How do you read a CSV file using pandas?', null, 'pd.read_csv("filename.csv")', 3, 'Use pd.read_csv() to load CSV data into a DataFrame.', 3],
-      [13, 5, 'fill_blank',   'To select a column "age" from a DataFrame df, use df[___].', null, '"age"', 2, 'Use df["column_name"] to access a specific column.', 4],
-
-      // Quiz 3 – OOP Classes Assignment (file_upload prompt)
-      [14, 3, 'short_answer', 'Upload your completed Java OOP assignment (classes & objects). Attach your source files as a ZIP.', null, 'See attached submission.', 10, 'Make sure your classes compile and follow OOP principles.', 1],
-
-      // Quiz 6 – Data Viz Assignment (file_upload prompt)
-      [15, 6, 'short_answer', 'Upload your chart analysis report as a PDF.', null, 'See attached submission.', 10, 'Include clear visualisations and a written interpretation.', 1],
-    ];
-    for (const q of questions) {
-      await db.execute(
-        'INSERT INTO `question` (question_id,quiz_id,question_type,question_text,options,correct_answer,points,improvement_tip,sort_order) VALUES (?,?,?,?,?,?,?,?,?)',
-        q
-      );
-    }
-    console.log('✓ question');
-
-    // ── 12. QUIZ_ATTEMPT ─────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `quiz_attempt`');
-    const attempts = [
-      // quiz_attempt_id, quiz_id, user_id, start_time, end_time, score, attempt_number, status, created_at
-      [1, 1,  7, '2025-03-20 10:00:00', '2025-03-20 10:18:00', 6.00,  1, 'graded',      '2025-03-20 10:00:00'],
-      [2, 1,  7, '2025-03-22 10:00:00', '2025-03-22 10:15:00', 7.00,  2, 'graded',      '2025-03-22 10:00:00'],
-      [3, 1,  8, '2025-03-21 11:00:00', '2025-03-21 11:20:00', 4.00,  1, 'graded',      '2025-03-21 11:00:00'],
-      [4, 2,  7, '2025-03-25 14:00:00', '2025-03-25 14:28:00', 5.00,  1, 'graded',      '2025-03-25 14:00:00'],
-      [5, 4,  9, '2025-03-15 09:00:00', '2025-03-15 09:22:00', 8.00,  1, 'graded',      '2025-03-15 09:00:00'],
-      [6, 4, 10, '2025-03-16 09:00:00', '2025-03-16 09:25:00', 3.00,  1, 'graded',      '2025-03-16 09:00:00'],
-      [7, 5, 11, '2025-04-10 10:00:00', '2025-04-10 10:27:00', 7.00,  1, 'graded',      '2025-04-10 10:00:00'],
-      [8, 5, 12, '2025-04-11 10:00:00', '2025-04-11 10:25:00', 9.00,  1, 'graded',      '2025-04-11 10:00:00'],
-      [9, 3,  7, '2025-04-05 13:00:00', null,                  null,  1, 'in_progress', '2025-04-05 13:00:00'],
-    ];
-    for (const a of attempts) {
-      await db.execute(
-        'INSERT INTO `quiz_attempt` (quiz_attempt_id,quiz_id,user_id,start_time,end_time,score,attempt_number,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        a
-      );
-    }
-    console.log('✓ quiz_attempt');
-
-    // ── 13. ANSWER ───────────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `answer`');
-    const answers = [
-      // answer_id, quiz_attempt_id, question_id, user_answer, is_correct, score_awarded, feedback, file_url, graded_by_user_id
-      // Attempt 1 (quiz 1, student 7)
-      [1,  1, 1, 'HyperText Markup Language', 1, 2.00, 'Correct!',        null, null],
-      [2,  1, 2, 'h1',                         1, 2.00, 'Correct!',        null, null],
-      [3,  1, 3, 'Sets the document type.',     1, 2.00, 'Mostly correct.', null, 4],
-      // Attempt 2 (quiz 1, student 7)
-      [4,  2, 1, 'HyperText Markup Language', 1, 2.00, 'Correct!',        null, null],
-      [5,  2, 2, 'h1',                         1, 2.00, 'Correct!',        null, null],
-      [6,  2, 3, 'Declares document version.',  1, 3.00, 'Well explained.', null, 4],
-      // Attempt 3 (quiz 1, student 8)
-      [7,  3, 1, 'HyperText Machine Language', 0, 0.00, 'Incorrect.',      null, null],
-      [8,  3, 2, 'h2',                          0, 0.00, 'Incorrect — it is h1.', null, null],
-      [9,  3, 3, 'Not sure.',                   0, 4.00, 'Needs improvement.', null, 4],
-      // Attempt 5 (quiz 4, student 9)
-      [10, 5, 7, '9',                           1, 3.00, 'Correct!',        null, null],
-      [11, 5, 8, 'A limit is the value a function approaches.', 1, 3.00, 'Great answer.', null, 5],
-      [12, 5, 9, 'f(a)',                        1, 2.00, 'Correct!',        null, null],
-      // Attempt 6 (quiz 4, student 10)
-      [13, 6, 7, '6',                           0, 0.00, 'Incorrect — answer is 9.', null, null],
-      [14, 6, 8, 'It is the actual value.',      0, 1.50, 'Partially correct.', null, 5],
-      [15, 6, 9, 'f(0)',                         0, 0.00, 'Incorrect.',       null, null],
-      // Attempt 7 (quiz 5, student 11)
-      [16, 7, 10, 'np.array()',   1, 2.00, 'Correct!',     null, null],
-      [17, 7, 11, 'DataFrame',    1, 2.00, 'Correct!',     null, null],
-      [18, 7, 12, 'pd.read_csv()',1, 3.00, 'Correct!',     null, null],
-      // Attempt 8 (quiz 5, student 12)
-      [19, 8, 10, 'np.array()',   1, 2.00, 'Correct!',           null, null],
-      [20, 8, 11, 'DataFrame',    1, 2.00, 'Correct!',           null, null],
-      [21, 8, 12, 'pd.read_csv("file.csv")', 1, 3.00, 'Perfect.', null, null],
-      [22, 8, 13, '"age"',        1, 2.00, 'Correct!',           null, null],
-    ];
-    for (const a of answers) {
-      await db.execute(
-        'INSERT INTO `answer` (answer_id,quiz_attempt_id,question_id,user_answer,is_correct,score_awarded,feedback,file_url,graded_by_user_id) VALUES (?,?,?,?,?,?,?,?,?)',
-        a
-      );
-    }
-    console.log('✓ answer');
-
-    // ── 14. NOTIFICATION ─────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `notification`');
-    const notifications = [
-      // notification_id, user_id, title, message, type, is_read, related_item_type, related_item_id, target_role, scheduled_at, created_at
-      // NOTE: target_role is NULL — these are user-specific notifications.
-      // Setting target_role='student' would make them visible to ALL students via the
-      // OR target_role='student' condition in getNotifications, which is not intended.
-      [1,  7,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  null,         null, '2025-03-01 09:05:00'],
-      [2,  8,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  null,         null, '2025-03-01 09:05:00'],
-      [3,  9,  'New Quiz Available',      'Limits Quiz is now open.',                 'quiz',        1, 'quiz',       4,  null,         null, '2025-03-05 09:05:00'],
-      [4,  10, 'At-Risk Alert',           'Your GPA has dropped below 2.0.',          'alert',       0, 'student_profile', 10, null,       null,'2025-03-10 08:00:00'],
-      [5,  3,  'Student At Risk',         'student04 is at risk. Please follow up.',  'alert',       0, 'student_profile', 10, null,         null,'2025-03-10 08:01:00'],
-      [6,  7,  'Quiz Graded',             'Your HTML Basics Quiz has been graded.',   'quiz_result', 1, 'quiz_attempt', 2,  null,         null, '2025-03-23 10:00:00'],
-      [7,  11, 'Course Reminder',         'Complete Module 9 before the deadline.',   'reminder',    0, 'module',     9,  null,         '2025-04-20 08:00:00', '2025-04-18 08:00:00'],
-      [8,  1,  'System Maintenance',      'Scheduled maintenance on Apr 30.',         'system',      0, null,         null,null,          null, '2025-04-01 10:00:00'],
-    ];
-    for (const n of notifications) {
-      await db.execute(
-        'INSERT INTO `notification` (notification_id,user_id,title,message,type,is_read,related_item_type,related_item_id,target_role,scheduled_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        n
-      );
-    }
-    console.log('✓ notification');
-
-    // ── 15. ACTIVITY_LOG ─────────────────────────────────────────────────────
-    await db.execute('TRUNCATE TABLE `activity_log`');
-    const activityLogs = [
-      // activity_log_id, user_id, activity_type, description, related_item_type, related_item_id, created_at
-      [1,  7,  'login',           'User logged in.',                       null,          null, '2025-03-20 09:55:00'],
-      [2,  7,  'quiz_start',      'Started HTML Basics Quiz.',             'quiz',        1,    '2025-03-20 10:00:00'],
-      [3,  7,  'quiz_submit',     'Submitted HTML Basics Quiz attempt 1.', 'quiz_attempt',1,    '2025-03-20 10:18:00'],
-      [4,  8,  'login',           'User logged in.',                       null,          null, '2025-03-21 10:55:00'],
-      [5,  8,  'quiz_start',      'Started HTML Basics Quiz.',             'quiz',        1,    '2025-03-21 11:00:00'],
-      [6,  8,  'quiz_submit',     'Submitted HTML Basics Quiz.',           'quiz_attempt',3,    '2025-03-21 11:20:00'],
-      [7,  9,  'login',           'User logged in.',                       null,          null, '2025-03-15 08:50:00'],
-      [8,  9,  'quiz_start',      'Started Limits Quiz.',                  'quiz',        4,    '2025-03-15 09:00:00'],
-      [9,  9,  'quiz_submit',     'Submitted Limits Quiz.',                'quiz_attempt',5,    '2025-03-15 09:22:00'],
-      [10, 4,  'course_create',   'Created course: Web Development.',      'course',      1,    '2025-02-01 08:10:00'],
-      [11, 4,  'quiz_create',     'Created HTML Basics Quiz.',             'quiz',        1,    '2025-03-01 09:00:00'],
-      [12, 11, 'lesson_view',     'Viewed lesson: Intro to NumPy.',        'lesson',      10,   '2025-03-25 09:10:00'],
-      [13, 12, 'lesson_view',     'Viewed lesson: Matplotlib Basics.',     'lesson',      11,   '2025-04-01 08:30:00'],
-      [14, 1,  'user_create',     'Admin created user student06.',         'user',        12,   '2025-02-03 10:20:00'],
-      [15, 10, 'enrollment',      'Enrolled in Calculus I.',               'course',      3,    '2025-02-12 09:10:00'],
-      [16, 7,  'page_visit',      'Viewed course: Web Development.',       'course',      1,    '2025-03-20 09:00:00'],
-      [17, 7,  'video_watch',     'Watched video: Intro to HTML.',         'lesson',      1,    '2025-03-20 09:05:00'],
-      [18, 8,  'page_visit',      'Viewed course: Calculus I.',           'course',      3,    '2025-03-21 10:00:00'],
-    ];
-    for (const l of activityLogs) {
-      await db.execute(
-        'INSERT INTO `activity_log` (activity_log_id,user_id,activity_type,description,related_item_type,related_item_id,created_at) VALUES (?,?,?,?,?,?,?)',
-        l
-      );
-    }
-    console.log('✓ activity_log');
-
-    await db.execute('SET FOREIGN_KEY_CHECKS = 1');
-    console.log('\n✅ Seeding complete! All 15 tables populated.');
-
+    console.log('\n✅  Seed complete. Demo accounts:');
+    console.log('    admin01 / admin01@smis.edu       (password: Admin@123)');
+    console.log('    advisor01, advisor02             (Advisor@123)');
+    console.log('    instructor01, 02, 03             (Instr@123)');
+    console.log('    student01 … student10            (Student@123)');
   } catch (err) {
-    await db.execute('SET FOREIGN_KEY_CHECKS = 1');
-    console.error('❌ Seeding failed:', err.message);
-    throw err;
+    console.error('\n❌  Seed failed:', err.message);
+    console.error(err);
+    process.exitCode = 1;
   } finally {
-    await db.end();
+    await pool.end();
   }
+}
+
+// ─── 1. USER ─────────────────────────────────────────────────────────────────
+// Stable IDs let the rest of this script hard-code FKs (e.g. advisor_id=2).
+async function seedUsers() {
+  const hash = (role) => bcrypt.hashSync(PASSWORD_PLAN[role], 10);
+  const rows = [
+    // admins
+    { user_id: 1, username: 'admin01',      email: 'admin01@smis.edu',      password_hash: hash('admin'),      role: 'admin',      department: 'Administration',   phone_number: '+60111000001', status: 'active', created_at: D(150, 8)  },
+    // advisors
+    { user_id: 2, username: 'advisor01',    email: 'advisor01@smis.edu',    password_hash: hash('advisor'),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000002', status: 'active', created_at: D(145, 8)  },
+    { user_id: 3, username: 'advisor02',    email: 'advisor02@smis.edu',    password_hash: hash('advisor'),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000003', status: 'active', created_at: D(145, 9)  },
+    // instructors
+    { user_id: 4, username: 'instructor01', email: 'instructor01@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Computer Science', phone_number: '+60111000004', status: 'active', created_at: D(140, 9)  },
+    { user_id: 5, username: 'instructor02', email: 'instructor02@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Mathematics',      phone_number: '+60111000005', status: 'active', created_at: D(140, 10) },
+    { user_id: 6, username: 'instructor03', email: 'instructor03@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Data Science',     phone_number: '+60111000006', status: 'active', created_at: D(138, 9)  },
+    // students — mix of programmes and advisors so dashboards have data
+    { user_id: 7,  username: 'student01',  email: 'student01@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000007', status: 'active', created_at: D(120, 10) },
+    { user_id: 8,  username: 'student02',  email: 'student02@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000008', status: 'active', created_at: D(120, 10) },
+    { user_id: 9,  username: 'student03',  email: 'student03@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000009', status: 'active', created_at: D(119, 11) },
+    { user_id: 10, username: 'student04',  email: 'student04@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000010', status: 'active', created_at: D(119, 12) },
+    { user_id: 11, username: 'student05',  email: 'student05@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000011', status: 'active', created_at: D(118, 10) },
+    { user_id: 12, username: 'student06',  email: 'student06@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000012', status: 'active', created_at: D(118, 11) },
+    { user_id: 13, username: 'student07',  email: 'student07@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000013', status: 'active', created_at: D(118, 12) },
+    { user_id: 14, username: 'student08',  email: 'student08@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000014', status: 'active', created_at: D(117, 10) },
+    { user_id: 15, username: 'student09',  email: 'student09@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000015', status: 'active', created_at: D(117, 11) },
+    { user_id: 16, username: 'student10',  email: 'student10@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000016', status: 'active', created_at: D(116, 10) },
+  ];
+  await insertRows('user', rows, [
+    'user_id','username','email','password_hash','role','department','phone_number','status','created_at',
+  ]);
+  console.log(`   ✓ user             (${rows.length} rows)`);
+}
+
+// ─── 2. INSTRUCTOR_PROFILE ───────────────────────────────────────────────────
+async function seedInstructorProfiles() {
+  const rows = [
+    { user_id: 4, specialization: 'Software Engineering',     subjects_taught: 'Web Development, Algorithms, OOP, Databases',          office_hours: 'Mon/Wed 10:00-12:00, Fri 14:00-16:00' },
+    { user_id: 5, specialization: 'Applied Mathematics',      subjects_taught: 'Calculus, Linear Algebra, Statistics, Discrete Math',   office_hours: 'Tue/Thu 14:00-16:00' },
+    { user_id: 6, specialization: 'Machine Learning',         subjects_taught: 'Python for DS, Data Mining, Deep Learning, MLOps',     office_hours: 'Wed/Fri 09:00-11:00' },
+  ];
+  await insertRows('instructor_profile', rows, ['user_id','specialization','subjects_taught','office_hours']);
+  console.log(`   ✓ instructor_profile (${rows.length} rows)`);
+}
+
+// ─── 3. STUDENT_PROFILE ──────────────────────────────────────────────────────
+// average_score and is_at_risk are recomputed from quiz_attempt rows at the
+// end of the seed (deriveStudentRiskFlags). Don't hard-code them here.
+async function seedStudentProfiles() {
+  const rows = [
+    { user_id: 7,  academic_level: 'Year 2', programme: 'Bachelor of Computer Science', learning_preferences: 'Visual learner; prefers video walkthroughs',       advisor_id: 2 },
+    { user_id: 8,  academic_level: 'Year 1', programme: 'Bachelor of Computer Science', learning_preferences: 'Reading/writing; likes long-form notes',           advisor_id: 2 },
+    { user_id: 9,  academic_level: 'Year 3', programme: 'Bachelor of Mathematics',      learning_preferences: 'Hands-on practice; works through proofs',          advisor_id: 3 },
+    { user_id: 10, academic_level: 'Year 2', programme: 'Bachelor of Mathematics',      learning_preferences: 'Visual learner; struggles with abstract concepts', advisor_id: 3 },
+    { user_id: 11, academic_level: 'Year 1', programme: 'Bachelor of Data Science',     learning_preferences: 'Mixed; project-based',                             advisor_id: 2 },
+    { user_id: 12, academic_level: 'Year 3', programme: 'Bachelor of Data Science',     learning_preferences: 'Reading/writing; note-taking',                     advisor_id: 3 },
+    { user_id: 13, academic_level: 'Year 2', programme: 'Bachelor of Computer Science', learning_preferences: 'Hands-on practice; build-first learner',           advisor_id: 2 },
+    { user_id: 14, academic_level: 'Year 3', programme: 'Bachelor of Mathematics',      learning_preferences: 'Visual learner; uses diagrams and flowcharts',     advisor_id: 3 },
+    { user_id: 15, academic_level: 'Year 1', programme: 'Bachelor of Data Science',     learning_preferences: 'Mixed; enjoys group work',                         advisor_id: 2 },
+    { user_id: 16, academic_level: 'Year 2', programme: 'Bachelor of Computer Science', learning_preferences: 'Reading/writing; thorough but slow',               advisor_id: 2 },
+  ];
+  await insertRows('student_profile', rows, ['user_id','academic_level','programme','learning_preferences','advisor_id']);
+  console.log(`   ✓ student_profile  (${rows.length} rows)`);
+}
+
+// ─── 4. COURSE ───────────────────────────────────────────────────────────────
+async function seedCourses() {
+  const rows = [
+    { course_id: 1, instructor_id: 4, title: 'Web Development Fundamentals', description: 'HTML, CSS, and JavaScript basics for beginners.',                              status: 'published', created_at: D(110, 8) },
+    { course_id: 2, instructor_id: 4, title: 'Object-Oriented Programming',   description: 'OOP principles using Java with a capstone mini-project.',                       status: 'published', created_at: D(108, 9) },
+    { course_id: 3, instructor_id: 5, title: 'Calculus I',                    description: 'Limits, derivatives, and integrals with applications.',                        status: 'published', created_at: D(110, 10) },
+    { course_id: 4, instructor_id: 5, title: 'Linear Algebra',                description: 'Vectors, matrices, eigenvalues, and transformations.',                         status: 'draft',     created_at: D(105, 11) },
+    { course_id: 5, instructor_id: 6, title: 'Introduction to Data Science',  description: 'Python, pandas, NumPy, and data visualisation foundations.',                    status: 'published', created_at: D(109, 8) },
+    { course_id: 6, instructor_id: 6, title: 'Machine Learning Basics',       description: 'Supervised vs unsupervised learning, model evaluation, and deployment basics.', status: 'archived',  created_at: D(280, 8) },
+    { course_id: 7, instructor_id: 4, title: 'Databases & SQL',               description: 'Relational modelling, SQL, indexes, and transactions.',                        status: 'published', created_at: D(95, 9) },
+  ];
+  await insertRows('course', rows, ['course_id','instructor_id','title','description','status','created_at']);
+  console.log(`   ✓ course           (${rows.length} rows)`);
+}
+
+// ─── 5. MODULE ───────────────────────────────────────────────────────────────
+async function seedModules() {
+  const rows = [
+    // Course 1 — Web Dev
+    { module_id: 1,  course_id: 1, title: 'Getting Started with HTML',    description: 'Tags, elements, and document structure.',              sort_order: 1, status: 'published' },
+    { module_id: 2,  course_id: 1, title: 'Styling with CSS',             description: 'Selectors, the box model, and flexbox basics.',         sort_order: 2, status: 'published' },
+    { module_id: 3,  course_id: 1, title: 'JavaScript Basics',            description: 'Variables, control flow, and functions.',              sort_order: 3, status: 'published' },
+    { module_id: 4,  course_id: 1, title: 'Responsive Layouts',           description: 'Media queries and modern CSS layout.',                 sort_order: 4, status: 'published' },
+    // Course 2 — OOP
+    { module_id: 5,  course_id: 2, title: 'Classes and Objects',          description: 'Defining and using classes in Java.',                   sort_order: 1, status: 'published' },
+    { module_id: 6,  course_id: 2, title: 'Inheritance and Polymorphism', description: 'Extending classes and method overriding.',              sort_order: 2, status: 'published' },
+    { module_id: 7,  course_id: 2, title: 'Interfaces and SOLID',         description: 'Designing extensible OOP systems.',                    sort_order: 3, status: 'published' },
+    // Course 3 — Calculus I
+    { module_id: 8,  course_id: 3, title: 'Limits and Continuity',        description: 'Understanding limits intuitively and formally.',        sort_order: 1, status: 'published' },
+    { module_id: 9,  course_id: 3, title: 'Differentiation',              description: 'Rules and applications of derivatives.',               sort_order: 2, status: 'published' },
+    { module_id: 10, course_id: 3, title: 'Integration Basics',           description: 'Antiderivatives and the fundamental theorem of calculus.', sort_order: 3, status: 'published' },
+    // Course 5 — Data Science
+    { module_id: 11, course_id: 5, title: 'Python for Data Science',      description: 'NumPy and pandas essentials.',                          sort_order: 1, status: 'published' },
+    { module_id: 12, course_id: 5, title: 'Data Visualisation',           description: 'Matplotlib and Seaborn charts.',                        sort_order: 2, status: 'published' },
+    { module_id: 13, course_id: 5, title: 'Exploratory Data Analysis',    description: 'Cleaning, profiling, and summarising datasets.',        sort_order: 3, status: 'published' },
+    // Course 6 — ML (archived)
+    { module_id: 14, course_id: 6, title: 'Regression Models',            description: 'Linear and logistic regression.',                       sort_order: 1, status: 'published' },
+    { module_id: 15, course_id: 6, title: 'Classification Basics',        description: 'kNN, decision trees, and evaluation metrics.',          sort_order: 2, status: 'archived' },
+    // Course 7 — Databases
+    { module_id: 16, course_id: 7, title: 'Relational Foundations',       description: 'Tables, keys, and basic normalisation.',                sort_order: 1, status: 'published' },
+    { module_id: 17, course_id: 7, title: 'Writing SQL Queries',          description: 'SELECT, joins, grouping, and aggregation.',             sort_order: 2, status: 'published' },
+  ];
+  await insertRows('module', rows, ['module_id','course_id','title','description','sort_order','status']);
+  console.log(`   ✓ module           (${rows.length} rows)`);
+}
+
+// ─── 6. LESSON ───────────────────────────────────────────────────────────────
+async function seedLessons() {
+  const rows = [
+    // Course 1 / Module 1
+    { lesson_id: 1,  module_id: 1,  title: 'What is HTML?',                              content_type: 'video', content_url: 'https://www.youtube.com/watch?v=qz0aGYrrlhU', content_text: null, sort_order: 1, duration_minutes: 10, status: 'published' },
+    { lesson_id: 2,  module_id: 1,  title: 'HTML Document Structure',                    content_type: 'text',  content_url: null, content_text: 'An HTML document begins with <!DOCTYPE html> which tells the browser this is an HTML5 document.\n\nThe basic structure:\n• <html> — the root element that wraps all content\n• <head> — contains meta info (title, charset, links to CSS)\n• <body> — contains all visible page content\n\nKey points:\n1. Tags are case-insensitive but lowercase is the convention.\n2. Most tags come in pairs: an opening tag and a closing tag.\n3. Self-closing tags like <br> and <img> do not need a closing tag.', sort_order: 2, duration_minutes: 5, status: 'published' },
+
+    // Course 1 / Module 2
+    { lesson_id: 3,  module_id: 2,  title: 'Introduction to CSS',                        content_type: 'video', content_url: 'https://www.youtube.com/watch?v=OXGznpKZ_sA', content_text: null, sort_order: 1, duration_minutes: 12, status: 'published' },
+    { lesson_id: 4,  module_id: 2,  title: 'CSS Box Model',                              content_type: 'pdf',   content_url: 'https://www.w3.org/TR/CSS2/box.html',          content_text: null, sort_order: 2, duration_minutes: 8,  status: 'published' },
+
+    // Course 1 / Module 3
+    { lesson_id: 5,  module_id: 3,  title: 'Variables and Data Types',                   content_type: 'video', content_url: 'https://www.youtube.com/watch?v=W6NZfCO5SIk', content_text: null, sort_order: 1, duration_minutes: 15, status: 'published' },
+    { lesson_id: 6,  module_id: 3,  title: 'Control Flow',                               content_type: 'text',  content_url: null, content_text: 'JavaScript offers standard control-flow primitives: `if/else`, `switch`, `for`, `while`, `do/while`, and the modern `for…of` loop for iterables.\n\nTruthiness rules:\n• `0`, `""`, `null`, `undefined`, `NaN`, and `false` are falsy.\n• Everything else is truthy — including non-empty arrays and objects.', sort_order: 2, duration_minutes: 10, status: 'published' },
+
+    // Course 1 / Module 4
+    { lesson_id: 7,  module_id: 4,  title: 'Media Queries',                              content_type: 'video', content_url: 'https://www.youtube.com/watch?v=srvUrASNj0s', content_text: null, sort_order: 1, duration_minutes: 9,  status: 'published' },
+
+    // Course 2 / Module 5
+    { lesson_id: 8,  module_id: 5,  title: 'Defining a Class in Java',                   content_type: 'video', content_url: 'https://www.youtube.com/watch?v=IUqKuGNasdM', content_text: null, sort_order: 1, duration_minutes: 18, status: 'published' },
+
+    // Course 2 / Module 6
+    { lesson_id: 9,  module_id: 6,  title: 'Inheritance in Java',                        content_type: 'text',  content_url: null, content_text: 'Inheritance allows a child class to acquire the properties and methods of a parent class using the `extends` keyword.\n\nExample:\npublic class Animal {\n    String name;\n    public void speak() {\n        System.out.println("Some sound");\n    }\n}\n\npublic class Dog extends Animal {\n    @Override\n    public void speak() {\n        System.out.println("Woof!");\n    }\n}\n\nKey concepts:\n• `super` keyword — calls the parent class constructor or method\n• `@Override` annotation — signals that a method is overriding a parent method\n• Polymorphism — a Dog object can be referred to as an Animal reference\n\nAnimal myDog = new Dog();\nmyDog.speak(); // prints "Woof!" — runtime polymorphism in action', sort_order: 1, duration_minutes: 10, status: 'published' },
+
+    // Course 2 / Module 7
+    { lesson_id: 10, module_id: 7,  title: 'SOLID Principles Overview',                  content_type: 'text',  content_url: null, content_text: 'SOLID is a mnemonic for five OOP design principles:\n• S — Single Responsibility\n• O — Open/Closed\n• L — Liskov Substitution\n• I — Interface Segregation\n• D — Dependency Inversion\n\nTogether they encourage code that is easier to test, extend, and refactor.', sort_order: 1, duration_minutes: 8, status: 'published' },
+
+    // Course 3 / Module 8
+    { lesson_id: 11, module_id: 8,  title: 'Understanding Limits',                       content_type: 'pdf',   content_url: 'https://tutorial.math.lamar.edu/pdf/Calculus_Cheat_Sheet_Limits.pdf', content_text: null, sort_order: 1, duration_minutes: 20, status: 'published' },
+
+    // Course 3 / Module 9
+    { lesson_id: 12, module_id: 9,  title: 'Power Rule',                                 content_type: 'video', content_url: 'https://www.youtube.com/watch?v=IvLpN1G1Ncg', content_text: null, sort_order: 1, duration_minutes: 12, status: 'published' },
+
+    // Course 3 / Module 10
+    { lesson_id: 13, module_id: 10, title: 'Fundamental Theorem of Calculus',            content_type: 'text',  content_url: null, content_text: 'The Fundamental Theorem of Calculus connects differentiation and integration:\n• Part I: If F(x) = ∫ₐˣ f(t) dt, then F′(x) = f(x).\n• Part II: ∫ₐᵇ f(x) dx = F(b) − F(a) where F is any antiderivative of f.', sort_order: 1, duration_minutes: 14, status: 'published' },
+
+    // Course 5 / Module 11
+    { lesson_id: 14, module_id: 11, title: 'Intro to NumPy',                             content_type: 'video', content_url: 'https://www.youtube.com/watch?v=QUT1VHiLmmI', content_text: null, sort_order: 1, duration_minutes: 20, status: 'published' },
+
+    // Course 5 / Module 12
+    { lesson_id: 15, module_id: 12, title: 'Matplotlib Basics',                          content_type: 'video', content_url: 'https://www.youtube.com/watch?v=3Xc3CA655Y4', content_text: null, sort_order: 1, duration_minutes: 15, status: 'published' },
+
+    // Course 5 / Module 13
+    { lesson_id: 16, module_id: 13, title: 'Profiling a Dataset',                        content_type: 'text',  content_url: null, content_text: 'EDA workflow:\n1. Inspect shape, dtypes, and missing values with `df.info()` and `df.describe()`.\n2. Visualise distributions per column (histograms, box plots).\n3. Cross-tabulate categorical variables.\n4. Investigate correlations with a heatmap before modelling.', sort_order: 1, duration_minutes: 11, status: 'published' },
+
+    // Course 6 / Module 14 (archived course — kept for history)
+    { lesson_id: 17, module_id: 14, title: 'Linear Regression',                          content_type: 'text',  content_url: null, content_text: 'Linear regression models the linear relationship between a dependent variable y and one or more independent variables x.\n\nSimple form: y = mx + b\n\nIn Python:\nfrom sklearn.linear_model import LinearRegression\nmodel = LinearRegression().fit(X, y)\n\nKey metrics: R², MSE, RMSE.', sort_order: 1, duration_minutes: 10, status: 'draft' },
+
+    // Course 7 / Module 16
+    { lesson_id: 18, module_id: 16, title: 'Primary vs Foreign Keys',                    content_type: 'text',  content_url: null, content_text: 'A primary key uniquely identifies a row in a table. A foreign key is a column (or set of columns) that references the primary key of another table — enforcing referential integrity at the database layer.', sort_order: 1, duration_minutes: 7, status: 'published' },
+
+    // Course 7 / Module 17
+    { lesson_id: 19, module_id: 17, title: 'Joins: INNER, LEFT, RIGHT, FULL',             content_type: 'video', content_url: 'https://www.youtube.com/watch?v=2HVMiPPuP9I', content_text: null, sort_order: 1, duration_minutes: 13, status: 'published' },
+  ];
+  await insertRows('lesson', rows, ['lesson_id','module_id','title','content_type','content_url','content_text','sort_order','duration_minutes','status']);
+  console.log(`   ✓ lesson           (${rows.length} rows)`);
+}
+
+// ─── 7. ENROLLMENT ───────────────────────────────────────────────────────────
+async function seedEnrollments() {
+  const rows = [
+    { enrollment_id: 1,  user_id: 7,  course_id: 1, enrolled_at: D(95, 9),  status: 'active',    completion_percent: 75.00, completed_at: null },
+    { enrollment_id: 2,  user_id: 7,  course_id: 2, enrolled_at: D(95, 10), status: 'active',    completion_percent: 40.00, completed_at: null },
+    { enrollment_id: 3,  user_id: 7,  course_id: 5, enrolled_at: D(94, 11), status: 'active',    completion_percent: 10.00, completed_at: null },
+    { enrollment_id: 4,  user_id: 8,  course_id: 1, enrolled_at: D(93, 10), status: 'active',    completion_percent: 20.00, completed_at: null },
+    { enrollment_id: 5,  user_id: 8,  course_id: 7, enrolled_at: D(85, 9),  status: 'active',    completion_percent: 50.00, completed_at: null },
+    { enrollment_id: 6,  user_id: 9,  course_id: 3, enrolled_at: D(90, 9),  status: 'completed', completion_percent: 100.00, completed_at: D(45, 12) },
+    { enrollment_id: 7,  user_id: 9,  course_id: 4, enrolled_at: D(80, 10), status: 'active',    completion_percent: 30.00, completed_at: null },
+    { enrollment_id: 8,  user_id: 10, course_id: 3, enrolled_at: D(88, 9),  status: 'active',    completion_percent: 25.00, completed_at: null },
+    { enrollment_id: 9,  user_id: 11, course_id: 5, enrolled_at: D(85, 10), status: 'active',    completion_percent: 60.00, completed_at: null },
+    { enrollment_id: 10, user_id: 11, course_id: 2, enrolled_at: D(82, 11), status: 'dropped',   completion_percent: 5.00,  completed_at: null },
+    { enrollment_id: 11, user_id: 12, course_id: 5, enrolled_at: D(85, 11), status: 'active',    completion_percent: 85.00, completed_at: null },
+    { enrollment_id: 12, user_id: 12, course_id: 6, enrolled_at: D(280, 9), status: 'completed', completion_percent: 100.00, completed_at: D(180, 10) },
+    { enrollment_id: 13, user_id: 13, course_id: 2, enrolled_at: D(80, 9),  status: 'active',    completion_percent: 55.00, completed_at: null },
+    { enrollment_id: 14, user_id: 14, course_id: 3, enrolled_at: D(78, 10), status: 'active',    completion_percent: 70.00, completed_at: null },
+    { enrollment_id: 15, user_id: 14, course_id: 4, enrolled_at: D(70, 11), status: 'active',    completion_percent: 20.00, completed_at: null },
+    { enrollment_id: 16, user_id: 15, course_id: 5, enrolled_at: D(75, 10), status: 'active',    completion_percent: 45.00, completed_at: null },
+    { enrollment_id: 17, user_id: 16, course_id: 1, enrolled_at: D(70, 9),  status: 'active',    completion_percent: 60.00, completed_at: null },
+    { enrollment_id: 18, user_id: 16, course_id: 7, enrolled_at: D(65, 11), status: 'active',    completion_percent: 30.00, completed_at: null },
+  ];
+  await insertRows('enrollment', rows, ['enrollment_id','user_id','course_id','enrolled_at','status','completion_percent','completed_at']);
+  console.log(`   ✓ enrollment       (${rows.length} rows)`);
+}
+
+// ─── 8. MODULE_PROGRESS ──────────────────────────────────────────────────────
+async function seedModuleProgress() {
+  const make = (user_id, module_id, status, lastAccessedDay, completedDay = null) => ({
+    user_id, module_id, status,
+    completion_percentage: status === 'completed' ? 100.00 : status === 'in_progress' ? 50.00 : 0.00,
+    last_accessed: D(lastAccessedDay),
+    completed_at: completedDay == null ? null : D(completedDay),
+  });
+
+  const rows = [
+    // student01 — Web Dev progress
+    make(7, 1, 'completed',   80, 80),
+    make(7, 2, 'completed',   70, 70),
+    make(7, 3, 'in_progress', 60),
+    // student01 — OOP
+    make(7, 5, 'completed',   65, 65),
+    make(7, 6, 'in_progress', 55),
+
+    // student02 — Web Dev
+    make(8, 1, 'in_progress', 40),
+    // student02 — Databases
+    make(8, 16, 'completed', 35, 35),
+    make(8, 17, 'in_progress', 25),
+
+    // student03 — Calculus completed
+    make(9, 8, 'completed', 60, 60),
+    make(9, 9, 'completed', 55, 55),
+    make(9, 10, 'completed', 50, 50),
+
+    // student04 — Calculus in progress (at-risk)
+    make(10, 8, 'in_progress', 30),
+
+    // student05 — DS
+    make(11, 11, 'completed', 45, 45),
+    make(11, 12, 'in_progress', 30),
+
+    // student06 — DS
+    make(12, 11, 'completed', 50, 50),
+    make(12, 12, 'completed', 40, 40),
+    make(12, 13, 'in_progress', 25),
+
+    // student07 — OOP
+    make(13, 5, 'completed', 40, 40),
+    make(13, 6, 'in_progress', 30),
+
+    // student08 — Calculus
+    make(14, 8, 'completed', 35, 35),
+    make(14, 9, 'in_progress', 25),
+
+    // student09 — DS
+    make(15, 11, 'in_progress', 30),
+
+    // student10 — Web Dev + Databases
+    make(16, 1, 'completed', 45, 45),
+    make(16, 2, 'completed', 40, 40),
+    make(16, 3, 'in_progress', 30),
+    make(16, 16, 'in_progress', 25),
+  ];
+  await insertRows('module_progress', rows, ['user_id','module_id','status','completion_percentage','last_accessed','completed_at']);
+  console.log(`   ✓ module_progress  (${rows.length} rows)`);
+}
+
+// ─── 9. QUIZ ─────────────────────────────────────────────────────────────────
+async function seedQuizzes() {
+  const rows = [
+    { quiz_id: 1, course_id: 1, module_id: 1,  created_by: 4, title: 'HTML Basics Quiz',          description: 'Test your HTML knowledge.',                status: 'published', due_date: D(30, 23, 59), time_limit_minutes: 20, max_attempts: 2, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(60, 9) },
+    { quiz_id: 2, course_id: 1, module_id: 2,  created_by: 4, title: 'CSS Fundamentals Quiz',     description: 'Test your CSS skills (randomised pool).', status: 'published', due_date: D(20, 23, 59), time_limit_minutes: 30, max_attempts: 1, randomize_questions: 1, num_questions_per_attempt: 3,    submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(55, 9) },
+    { quiz_id: 3, course_id: 2, module_id: 5,  created_by: 4, title: 'OOP Classes Assignment',    description: 'Submit your Java OOP mini-project.',      status: 'published', due_date: D(15, 23, 59), time_limit_minutes: null, max_attempts: 1, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'file_upload', accepted_file_types: '.zip,.java,.pdf', created_at: D(50, 9) },
+    { quiz_id: 4, course_id: 3, module_id: 8,  created_by: 5, title: 'Limits Quiz',               description: 'Test understanding of limits.',           status: 'published', due_date: D(25, 23, 59), time_limit_minutes: 25, max_attempts: 2, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(58, 9) },
+    { quiz_id: 5, course_id: 3, module_id: 9,  created_by: 5, title: 'Differentiation Practice',  description: 'Mixed differentiation problems.',         status: 'draft',     due_date: D(5, 23, 59),  time_limit_minutes: 45, max_attempts: 1, randomize_questions: 1, num_questions_per_attempt: 4,    submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(40, 9) },
+    { quiz_id: 6, course_id: 5, module_id: 11, created_by: 6, title: 'NumPy & Pandas Quiz',       description: 'Assess your Python data skills.',         status: 'published', due_date: D(18, 23, 59), time_limit_minutes: 30, max_attempts: 1, randomize_questions: 1, num_questions_per_attempt: 4,    submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(45, 9) },
+    { quiz_id: 7, course_id: 5, module_id: 12, created_by: 6, title: 'Data Viz Assignment',       description: 'Submit your chart analysis (PDF/PNG).',   status: 'archived',  due_date: D(70, 23, 59), time_limit_minutes: null, max_attempts: 1, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'file_upload', accepted_file_types: '.pdf,.png,.ipynb', created_at: D(75, 9) },
+    { quiz_id: 8, course_id: 6, module_id: 14, created_by: 6, title: 'Linear Regression Quiz',    description: 'Foundations of linear modelling.',        status: 'archived',  due_date: D(220, 23, 59), time_limit_minutes: 30, max_attempts: 1, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'online_quiz', accepted_file_types: null,         created_at: D(260, 9) },
+    { quiz_id: 9, course_id: 7, module_id: 17, created_by: 4, title: 'SQL Joins Quiz',            description: 'Practise INNER/LEFT/RIGHT joins.',        status: 'published', due_date: D(10, 23, 59), time_limit_minutes: 25, max_attempts: 2, randomize_questions: 0, num_questions_per_attempt: null, submission_type: 'online_quiz', accepted_file_types: null,          created_at: D(35, 9) },
+  ];
+  await insertRows('quiz', rows, ['quiz_id','course_id','module_id','created_by','title','description','status','due_date','time_limit_minutes','max_attempts','randomize_questions','num_questions_per_attempt','submission_type','accepted_file_types','created_at']);
+  console.log(`   ✓ quiz             (${rows.length} rows)`);
+}
+
+// ─── 10. QUIZ_FEEDBACK ───────────────────────────────────────────────────────
+async function seedQuizFeedback() {
+  const rows = [
+    { quiz_feedback_id: 1,  quiz_id: 1, min_score:   0.00, max_score:  49.99, feedback_message: 'Keep practising — review the HTML basics module.' },
+    { quiz_feedback_id: 2,  quiz_id: 1, min_score:  50.00, max_score:  74.99, feedback_message: "Good effort! A few more reviews and you'll ace it." },
+    { quiz_feedback_id: 3,  quiz_id: 1, min_score:  75.00, max_score: 100.00, feedback_message: 'Excellent! You have a solid grasp of HTML.' },
+
+    { quiz_feedback_id: 4,  quiz_id: 2, min_score:   0.00, max_score:  59.99, feedback_message: 'Revisit selectors and the box model.' },
+    { quiz_feedback_id: 5,  quiz_id: 2, min_score:  60.00, max_score: 100.00, feedback_message: 'Great CSS work — try flexbox challenges next.' },
+
+    { quiz_feedback_id: 6,  quiz_id: 4, min_score:   0.00, max_score:  49.99, feedback_message: 'Review the limits chapter before your next attempt.' },
+    { quiz_feedback_id: 7,  quiz_id: 4, min_score:  50.00, max_score: 100.00, feedback_message: 'Well done on the limits quiz!' },
+
+    { quiz_feedback_id: 8,  quiz_id: 6, min_score:   0.00, max_score:  59.99, feedback_message: 'Revisit NumPy and Pandas fundamentals.' },
+    { quiz_feedback_id: 9,  quiz_id: 6, min_score:  60.00, max_score: 100.00, feedback_message: 'Great work on the Python data quiz!' },
+
+    { quiz_feedback_id: 10, quiz_id: 9, min_score:   0.00, max_score:  49.99, feedback_message: 'Practice joins on a sample dataset.' },
+    { quiz_feedback_id: 11, quiz_id: 9, min_score:  50.00, max_score:  79.99, feedback_message: 'Solid understanding — keep practising outer joins.' },
+    { quiz_feedback_id: 12, quiz_id: 9, min_score:  80.00, max_score: 100.00, feedback_message: 'Excellent join skills!' },
+  ];
+  await insertRows('quiz_feedback', rows, ['quiz_feedback_id','quiz_id','min_score','max_score','feedback_message']);
+  console.log(`   ✓ quiz_feedback    (${rows.length} rows)`);
+}
+
+// ─── 11. QUESTION ────────────────────────────────────────────────────────────
+async function seedQuestions() {
+  const rows = [
+    // Quiz 1 — HTML Basics
+    { question_id: 1,  quiz_id: 1, question_type: 'mcq',          question_text: 'What does HTML stand for?', options: JSON.stringify(['HyperText Markup Language','HyperText Machine Language','HighText Markup Language','None of the above']), correct_answer: 'HyperText Markup Language', points: 2, improvement_tip: 'HTML stands for HyperText Markup Language.', sort_order: 1 },
+    { question_id: 2,  quiz_id: 1, question_type: 'fill_blank',   question_text: 'The ___ tag is used to define the largest heading in HTML.', options: null, correct_answer: 'h1', points: 2, improvement_tip: 'Headings go from <h1> (largest) to <h6> (smallest).', sort_order: 2 },
+    { question_id: 3,  quiz_id: 1, question_type: 'short_answer', question_text: 'Explain the purpose of the <!DOCTYPE html> declaration.', options: null, correct_answer: 'It defines the document type and version of HTML.', points: 3, improvement_tip: 'DOCTYPE tells the browser which version of HTML to use.', sort_order: 3 },
+
+    // Quiz 2 — CSS Fundamentals (randomised 3-of-4)
+    { question_id: 4,  quiz_id: 2, question_type: 'mcq',          question_text: 'Which CSS property controls text size?', options: JSON.stringify(['font-size','text-size','font-weight','text-style']), correct_answer: 'font-size', points: 2, improvement_tip: 'Use font-size to control text size in CSS.', sort_order: 1 },
+    { question_id: 5,  quiz_id: 2, question_type: 'mcq',          question_text: 'What does the CSS box model include?', options: JSON.stringify(['Margin, Border, Padding, Content','Margin, Font, Padding, Content','Border, Font, Margin, Layout','None of the above']), correct_answer: 'Margin, Border, Padding, Content', points: 2, improvement_tip: 'The box model consists of Margin, Border, Padding, and Content.', sort_order: 2 },
+    { question_id: 6,  quiz_id: 2, question_type: 'fill_blank',   question_text: 'To center a block element horizontally, set margin to ___.', options: null, correct_answer: 'auto', points: 2, improvement_tip: 'Use `margin: auto` with a defined width to center elements.', sort_order: 3 },
+    { question_id: 7,  quiz_id: 2, question_type: 'mcq',          question_text: 'Which unit is relative to the root element font size?', options: JSON.stringify(['em','rem','px','%']), correct_answer: 'rem', points: 2, improvement_tip: '`rem` is relative to the root, `em` is relative to the parent.', sort_order: 4 },
+
+    // Quiz 3 — OOP file-upload placeholder prompt
+    { question_id: 8,  quiz_id: 3, question_type: 'short_answer', question_text: 'Upload your completed Java OOP mini-project. Attach your source files (and/or a brief write-up) as a ZIP or PDF.', options: null, correct_answer: 'See attached submission.', points: 10, improvement_tip: 'Make sure your classes compile and follow OOP principles.', sort_order: 1 },
+
+    // Quiz 4 — Limits
+    { question_id: 9,  quiz_id: 4, question_type: 'mcq',          question_text: 'What is the limit of f(x) = x² as x → 3?', options: JSON.stringify(['6','9','3','0']), correct_answer: '9', points: 3, improvement_tip: 'Substitute x = 3 directly: 3² = 9.', sort_order: 1 },
+    { question_id: 10, quiz_id: 4, question_type: 'short_answer', question_text: 'Define the concept of a limit in calculus.', options: null, correct_answer: 'A limit describes the value a function approaches as the input approaches a point.', points: 3, improvement_tip: 'Think of a limit as the expected value, not necessarily the actual value.', sort_order: 2 },
+    { question_id: 11, quiz_id: 4, question_type: 'fill_blank',   question_text: 'A function is continuous at x = a if the limit as x → a equals ___.', options: null, correct_answer: 'f(a)', points: 2, improvement_tip: 'Continuity requires the limit and function value to match.', sort_order: 3 },
+
+    // Quiz 6 — NumPy & Pandas
+    { question_id: 12, quiz_id: 6, question_type: 'mcq',          question_text: 'Which function creates a NumPy array?', options: JSON.stringify(['np.array()','np.create()','np.make()','np.list()']), correct_answer: 'np.array()', points: 2, improvement_tip: 'Use `np.array()` to create arrays in NumPy.', sort_order: 1 },
+    { question_id: 13, quiz_id: 6, question_type: 'mcq',          question_text: 'Which pandas object is used for tabular data?', options: JSON.stringify(['DataFrame','Series','Array','Matrix']), correct_answer: 'DataFrame', points: 2, improvement_tip: 'DataFrames are 2D labelled data structures in pandas.', sort_order: 2 },
+    { question_id: 14, quiz_id: 6, question_type: 'short_answer', question_text: 'How do you read a CSV file using pandas?', options: null, correct_answer: 'pd.read_csv("filename.csv")', points: 3, improvement_tip: 'Use `pd.read_csv()` to load CSV data into a DataFrame.', sort_order: 3 },
+    { question_id: 15, quiz_id: 6, question_type: 'fill_blank',   question_text: 'To select a column "age" from a DataFrame df, use df[___].', options: null, correct_answer: '"age"', points: 2, improvement_tip: 'Use `df["column_name"]` to access a specific column.', sort_order: 4 },
+
+    // Quiz 7 — Data Viz file-upload placeholder prompt
+    { question_id: 16, quiz_id: 7, question_type: 'short_answer', question_text: 'Upload your chart analysis report as a PDF (or attach an .ipynb notebook).', options: null, correct_answer: 'See attached submission.', points: 10, improvement_tip: 'Include clear visualisations and a written interpretation.', sort_order: 1 },
+
+    // Quiz 9 — SQL Joins
+    { question_id: 17, quiz_id: 9, question_type: 'mcq',          question_text: 'Which join returns only rows with matches in both tables?', options: JSON.stringify(['INNER JOIN','LEFT JOIN','RIGHT JOIN','FULL OUTER JOIN']), correct_answer: 'INNER JOIN', points: 2, improvement_tip: 'INNER JOIN keeps only matching rows.', sort_order: 1 },
+    { question_id: 18, quiz_id: 9, question_type: 'mcq',          question_text: 'Which join keeps all rows from the left table, filling missing matches with NULL?', options: JSON.stringify(['LEFT JOIN','RIGHT JOIN','INNER JOIN','CROSS JOIN']), correct_answer: 'LEFT JOIN', points: 2, improvement_tip: 'LEFT JOIN preserves every row on the left.', sort_order: 2 },
+    { question_id: 19, quiz_id: 9, question_type: 'fill_blank',   question_text: 'The keyword to alias a column in SELECT is ___.', options: null, correct_answer: 'AS', points: 2, improvement_tip: '`column AS alias` renames output columns.', sort_order: 3 },
+    { question_id: 20, quiz_id: 9, question_type: 'short_answer', question_text: 'Explain the difference between INNER JOIN and LEFT JOIN in one sentence.', options: null, correct_answer: 'INNER JOIN returns only matching rows; LEFT JOIN returns all left-table rows plus matches (NULL where no match).', points: 4, improvement_tip: 'Focus on row preservation: LEFT keeps every left row; INNER keeps only matches.', sort_order: 4 },
+  ];
+  await insertRows('question', rows, ['question_id','quiz_id','question_type','question_text','options','correct_answer','points','improvement_tip','sort_order']);
+  console.log(`   ✓ question         (${rows.length} rows)`);
+}
+
+// ─── 12. QUIZ_ATTEMPT ────────────────────────────────────────────────────────
+// Scores here drive the average_score + is_at_risk recompute at the end.
+// student04 (id 10) ends up below 50% → advisor alert fires.
+async function seedQuizAttempts() {
+  const attemptAt = (dayOffset, hour, durationMinutes) => {
+    const start = startAt(dayOffset, hour);
+    return {
+      start_time: fmt(start),
+      end_time: durationMinutes == null ? null : fmt(addMin(start, durationMinutes)),
+    };
+  };
+
+  const rows = [];
+
+  const mk = (id, quiz_id, user_id, dayOffset, hour, durationMinutes, score, status, attemptNumber) => {
+    const { start_time, end_time } = attemptAt(dayOffset, hour, durationMinutes);
+    rows.push({
+      quiz_attempt_id: id, quiz_id, user_id,
+      start_time, end_time,
+      score, attempt_number: attemptNumber, status,
+      created_at: fmt(startAt(dayOffset, hour)),
+    });
+  };
+
+  // student01 — strong perf
+  mk(1,  1, 7,  48, 10, 18,  85.71, 'graded', 1);
+  mk(2,  1, 7,  46, 10, 15, 100.00, 'graded', 2);
+  mk(3,  2, 7,  42, 14, 28,  83.33, 'graded', 1);
+
+  // student02 — improved on retake
+  mk(4,  1, 8,  45, 11, 20,  42.86, 'graded', 1);
+  mk(5,  1, 8,  43, 11, 18,  71.43, 'graded', 2);
+
+  // student03 — high-flyer
+  mk(6,  4, 9,  50, 9, 22, 100.00, 'graded', 1);
+
+  // student04 — at-risk (two low scores → average below 50)
+  mk(7,  4, 10, 48, 9, 25,  12.50, 'graded', 1);
+  mk(8,  4, 10, 46, 10, 25, 25.00, 'graded', 2);
+
+  // student05
+  mk(9,  6, 11, 36, 10, 27, 55.00, 'graded', 1);
+
+  // student06
+  mk(10, 6, 12, 35, 10, 25, 90.00, 'graded', 1);
+  mk(11, 8, 12, 200, 10, 25, 78.00, 'graded', 1);
+
+  // student07 — one in-progress attempt, one graded
+  mk(12, 3, 13, 20, 13, null, null, 'in_progress', 1);
+  mk(13, 9, 13, 18, 9, 22, 70.00, 'graded', 1);
+
+  // student08
+  mk(14, 4, 14, 28, 10, 22, 87.50, 'graded', 1);
+
+  // student10
+  mk(15, 1, 16, 40, 14, 20, 57.14, 'graded', 1);
+
+  await insertRows('quiz_attempt', rows, ['quiz_attempt_id','quiz_id','user_id','start_time','end_time','score','attempt_number','status','created_at']);
+  console.log(`   ✓ quiz_attempt     (${rows.length} rows)`);
+}
+
+// ─── 13. ANSWER ──────────────────────────────────────────────────────────────
+// One row per (attempt, question). short_answer rows show is_correct=NULL
+// (pending review). Submission URL is added for the file_upload attempts.
+async function seedAnswers() {
+  const rows = [
+    // Attempt 1 — student01 / quiz1 (HTML)
+    { answer_id: 1,  quiz_attempt_id: 1, question_id: 1,  user_answer: 'HyperText Markup Language', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 2,  quiz_attempt_id: 1, question_id: 2,  user_answer: 'h1',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 3,  quiz_attempt_id: 1, question_id: 3,  user_answer: 'Sets the document type.',   is_correct: 1, score_awarded: 3.00, feedback: 'Mostly correct.',                           file_url: null, graded_by_user_id: 4 },
+
+    // Attempt 2 — student01 / quiz1 retake
+    { answer_id: 4,  quiz_attempt_id: 2, question_id: 1,  user_answer: 'HyperText Markup Language', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 5,  quiz_attempt_id: 2, question_id: 2,  user_answer: 'h1',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 6,  quiz_attempt_id: 2, question_id: 3,  user_answer: 'Declares document version.', is_correct: 1, score_awarded: 3.00, feedback: 'Well explained.',                           file_url: null, graded_by_user_id: 4 },
+
+    // Attempt 3 — student01 / quiz2 (CSS) — all correct
+    { answer_id: 7,  quiz_attempt_id: 3, question_id: 4,  user_answer: 'font-size',                       is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',           file_url: null, graded_by_user_id: null },
+    { answer_id: 8,  quiz_attempt_id: 3, question_id: 5,  user_answer: 'Margin, Border, Padding, Content', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',           file_url: null, graded_by_user_id: null },
+    { answer_id: 9,  quiz_attempt_id: 3, question_id: 6,  user_answer: 'auto',                            is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',           file_url: null, graded_by_user_id: null },
+
+    // Attempt 4 — student02 / quiz1 (first try) — mostly wrong
+    { answer_id: 10, quiz_attempt_id: 4, question_id: 1,  user_answer: 'HyperText Machine Language', is_correct: 0, score_awarded: 0.00, feedback: 'Incorrect.',                              file_url: null, graded_by_user_id: null },
+    { answer_id: 11, quiz_attempt_id: 4, question_id: 2,  user_answer: 'h2',                         is_correct: 0, score_awarded: 0.00, feedback: 'Incorrect — it is h1.',                   file_url: null, graded_by_user_id: null },
+    { answer_id: 12, quiz_attempt_id: 4, question_id: 3,  user_answer: 'Not sure.',                  is_correct: 0, score_awarded: 0.00, feedback: 'Needs improvement.',                      file_url: null, graded_by_user_id: 4 },
+
+    // Attempt 5 — student02 / quiz1 (retake) — much better
+    { answer_id: 13, quiz_attempt_id: 5, question_id: 1,  user_answer: 'HyperText Markup Language', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 14, quiz_attempt_id: 5, question_id: 2,  user_answer: 'h1',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                  file_url: null, graded_by_user_id: null },
+    { answer_id: 15, quiz_attempt_id: 5, question_id: 3,  user_answer: 'Declares document version.', is_correct: 1, score_awarded: 3.00, feedback: 'Well explained.',                           file_url: null, graded_by_user_id: 4 },
+
+    // Attempt 6 — student03 / quiz4 (Limits)
+    { answer_id: 16, quiz_attempt_id: 6, question_id: 9,  user_answer: '9',                                                          is_correct: 1, score_awarded: 3.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+    { answer_id: 17, quiz_attempt_id: 6, question_id: 10, user_answer: 'A limit is the value a function approaches as the input approaches a point.', is_correct: 1, score_awarded: 3.00, feedback: 'Great answer.', file_url: null, graded_by_user_id: 5 },
+    { answer_id: 18, quiz_attempt_id: 6, question_id: 11, user_answer: 'f(a)',                                                       is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+
+    // Attempt 7 — student04 / quiz4 (first try, very low)
+    { answer_id: 19, quiz_attempt_id: 7, question_id: 9,  user_answer: '6',                                                          is_correct: 0, score_awarded: 0.00, feedback: 'Incorrect — the answer is 9.',         file_url: null, graded_by_user_id: null },
+    { answer_id: 20, quiz_attempt_id: 7, question_id: 10, user_answer: 'It is the actual value at the point.',                      is_correct: 0, score_awarded: 1.50, feedback: 'Partially correct.',                  file_url: null, graded_by_user_id: 5 },
+    { answer_id: 21, quiz_attempt_id: 7, question_id: 11, user_answer: 'f(0)',                                                       is_correct: 0, score_awarded: 0.00, feedback: 'Incorrect.',                          file_url: null, graded_by_user_id: null },
+
+    // Attempt 8 — student04 / quiz4 (second try, slightly better)
+    { answer_id: 22, quiz_attempt_id: 8, question_id: 9,  user_answer: '9',                                                          is_correct: 1, score_awarded: 3.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+    { answer_id: 23, quiz_attempt_id: 8, question_id: 10, user_answer: 'It tells us what value the function approaches.',           is_correct: 0, score_awarded: 2.00, feedback: 'Better, but missing the formal definition.', file_url: null, graded_by_user_id: 5 },
+    { answer_id: 24, quiz_attempt_id: 8, question_id: 11, user_answer: 'f(a)',                                                       is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+
+    // Attempt 9 — student05 / quiz6 (NumPy)
+    { answer_id: 25, quiz_attempt_id: 9, question_id: 12, user_answer: 'np.array()',     is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                              file_url: null, graded_by_user_id: null },
+    { answer_id: 26, quiz_attempt_id: 9, question_id: 13, user_answer: 'DataFrame',      is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',                                              file_url: null, graded_by_user_id: null },
+    { answer_id: 27, quiz_attempt_id: 9, question_id: 14, user_answer: 'pd.read_csv()',  is_correct: 1, score_awarded: 3.00, feedback: 'Correct!',                                              file_url: null, graded_by_user_id: null },
+    { answer_id: 28, quiz_attempt_id: 9, question_id: 15, user_answer: 'age',            is_correct: 0, score_awarded: 0.00, feedback: 'Almost — include quotes around the column name.',       file_url: null, graded_by_user_id: null },
+
+    // Attempt 10 — student06 / quiz6
+    { answer_id: 29, quiz_attempt_id: 10, question_id: 12, user_answer: 'np.array()',               is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+    { answer_id: 30, quiz_attempt_id: 10, question_id: 13, user_answer: 'DataFrame',                is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+    { answer_id: 31, quiz_attempt_id: 10, question_id: 14, user_answer: 'pd.read_csv("file.csv")',  is_correct: 1, score_awarded: 3.00, feedback: 'Perfect.', file_url: null, graded_by_user_id: null },
+    { answer_id: 32, quiz_attempt_id: 10, question_id: 15, user_answer: '"age"',                    is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+
+    // Attempt 11 — student06 / quiz8 (archived ML)
+    { answer_id: 33, quiz_attempt_id: 11, question_id: 12, user_answer: 'np.array()',                is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+    { answer_id: 34, quiz_attempt_id: 11, question_id: 13, user_answer: 'DataFrame',                 is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+    { answer_id: 35, quiz_attempt_id: 11, question_id: 14, user_answer: 'pd.read_csv("data.csv")',   is_correct: 1, score_awarded: 3.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+    { answer_id: 36, quiz_attempt_id: 11, question_id: 15, user_answer: '"age"',                     is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
+
+    // Attempt 12 — student07 / quiz3 (OOP file_upload, still in_progress)
+    { answer_id: 37, quiz_attempt_id: 12, question_id: 8,  user_answer: 'Working on it — submitting tomorrow.', is_correct: null, score_awarded: 0.00, feedback: 'Awaiting instructor review', file_url: null, graded_by_user_id: null },
+
+    // Attempt 13 — student07 / quiz9 (SQL Joins, full marks)
+    { answer_id: 38, quiz_attempt_id: 13, question_id: 17, user_answer: 'INNER JOIN',          is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',               file_url: null, graded_by_user_id: null },
+    { answer_id: 39, quiz_attempt_id: 13, question_id: 18, user_answer: 'LEFT JOIN',           is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',               file_url: null, graded_by_user_id: null },
+    { answer_id: 40, quiz_attempt_id: 13, question_id: 19, user_answer: 'AS',                  is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',               file_url: null, graded_by_user_id: null },
+    { answer_id: 41, quiz_attempt_id: 13, question_id: 20, user_answer: 'INNER returns matching rows only; LEFT keeps all left rows plus matches.', is_correct: 1, score_awarded: 4.00, feedback: 'Clear and complete.', file_url: null, graded_by_user_id: 4 },
+
+    // Attempt 14 — student08 / quiz4 (Limits)
+    { answer_id: 42, quiz_attempt_id: 14, question_id: 9,  user_answer: '9',                            is_correct: 1, score_awarded: 3.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+    { answer_id: 43, quiz_attempt_id: 14, question_id: 10, user_answer: 'A limit is the value a function approaches.', is_correct: 1, score_awarded: 3.00, feedback: 'Great answer.', file_url: null, graded_by_user_id: 5 },
+    { answer_id: 44, quiz_attempt_id: 14, question_id: 11, user_answer: 'f(a)',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',     file_url: null, graded_by_user_id: null },
+
+    // Attempt 15 — student10 / quiz1 (HTML)
+    { answer_id: 45, quiz_attempt_id: 15, question_id: 1,  user_answer: 'HyperText Markup Language', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',         file_url: null, graded_by_user_id: null },
+    { answer_id: 46, quiz_attempt_id: 15, question_id: 2,  user_answer: 'h1',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',         file_url: null, graded_by_user_id: null },
+    { answer_id: 47, quiz_attempt_id: 15, question_id: 3,  user_answer: 'Sets the document version.', is_correct: 1, score_awarded: 3.00, feedback: 'Well explained.',  file_url: null, graded_by_user_id: 4 },
+
+    // ── Example file-upload submission for student07 (the in_progress OOP attempt
+    //    above). When the student "submits a file" via the UI, this answer row is
+    //    filled in. Showing one historical file_url here so the assignment
+    //    detail page renders even before any new submission happens.
+    { answer_id: 48, quiz_attempt_id: 12, question_id: 8,  user_answer: 'Draft Java OOP project — v1', is_correct: null, score_awarded: 0.00, feedback: 'Awaiting instructor review', file_url: '/uploads/student07_oop_draft.zip', graded_by_user_id: null },
+  ];
+
+  await insertRows('answer', rows, ['answer_id','quiz_attempt_id','question_id','user_answer','is_correct','score_awarded','feedback','file_url','graded_by_user_id']);
+  console.log(`   ✓ answer           (${rows.length} rows)`);
+}
+
+// ─── 14. NOTIFICATION ────────────────────────────────────────────────────────
+// Mix of personal notifications (target_role=NULL) and student-broadcasts
+// (target_role='student').  The student feed API returns rows where
+// user_id = me OR target_role = 'student'.
+async function seedNotifications() {
+  const rows = [
+    // ── Personalised alerts ────────────────────────────────────────────────
+    { notification_id: 1,  user_id: 7,  title: 'New Quiz Available',        message: 'HTML Basics Quiz is now open.',                                       type: 'quiz',         is_read: 0, related_item_type: 'quiz',           related_item_id: 1,  target_role: null, scheduled_at: null, created_at: D(60, 9) },
+    { notification_id: 2,  user_id: 8,  title: 'New Quiz Available',        message: 'HTML Basics Quiz is now open.',                                       type: 'quiz',         is_read: 0, related_item_type: 'quiz',           related_item_id: 1,  target_role: null, scheduled_at: null, created_at: D(60, 9) },
+    { notification_id: 3,  user_id: 9,  title: 'New Quiz Available',        message: 'Limits Quiz is now open.',                                            type: 'quiz',         is_read: 1, related_item_type: 'quiz',           related_item_id: 4,  target_role: null, scheduled_at: null, created_at: D(58, 9) },
+    { notification_id: 4,  user_id: 10, title: 'At-Risk Alert',             message: 'Your average quiz score has dropped below 50%.',                     type: 'alert',        is_read: 0, related_item_type: 'student_profile', related_item_id: 10, target_role: null, scheduled_at: null, created_at: D(48, 8, 1) },
+    { notification_id: 5,  user_id: 3,  title: 'Student At Risk',           message: 'student04 is at risk — please follow up.',                           type: 'alert',        is_read: 0, related_item_type: 'student_profile', related_item_id: 10, target_role: null, scheduled_at: null, created_at: D(48, 8, 2) },
+    { notification_id: 6,  user_id: 7,  title: 'Quiz Graded',               message: 'Your HTML Basics Quiz (attempt 2) has been graded — 100%.',          type: 'quiz_result',  is_read: 1, related_item_type: 'quiz_attempt',   related_item_id: 2,  target_role: null, scheduled_at: null, created_at: D(46, 10, 5) },
+    { notification_id: 7,  user_id: 11, title: 'Course Reminder',           message: 'Complete Module 12 before the deadline.',                            type: 'reminder',     is_read: 0, related_item_type: 'module',         related_item_id: 12, target_role: null, scheduled_at: D(18, 8), created_at: D(20, 8) },
+    { notification_id: 8,  user_id: 1,  title: 'System Maintenance',        message: 'Scheduled maintenance on the 30th.',                                   type: 'system',       is_read: 0, related_item_type: null,              related_item_id: null, target_role: null, scheduled_at: null, created_at: D(30, 10) },
+    { notification_id: 9,  user_id: 4,  title: 'New Submission',            message: 'A student submitted the OOP Classes Assignment.',                     type: 'submission',   is_read: 0, related_item_type: 'quiz_attempt',   related_item_id: 12, target_role: null, scheduled_at: null, created_at: D(20, 14) },
+    { notification_id: 10, user_id: 13, title: 'Submission Confirmed',      message: 'Your submission for "OOP Classes Assignment" has been received.',    type: 'submission_confirm', is_read: 0, related_item_type: 'quiz_attempt', related_item_id: 12, target_role: null, scheduled_at: null, created_at: D(20, 14, 5) },
+    { notification_id: 11, user_id: 2,  title: 'New Advisee',               message: 'student07 was added to your advisee list.',                           type: 'info',         is_read: 1, related_item_type: 'user',            related_item_id: 13, target_role: null, scheduled_at: null, created_at: D(80, 9) },
+
+    // ── Broadcasts (target_role='student' → visible to every student) ──────
+    { notification_id: 12, user_id: 1,  title: 'Welcome to SMIS!',          message: 'The semester catalogue is now live — explore your dashboard.',         type: 'announcement', is_read: 0, related_item_type: null, related_item_id: null, target_role: 'student', scheduled_at: null, created_at: D(100, 9) },
+    { notification_id: 13, user_id: 1,  title: 'Library Maintenance',       message: 'Library resources will be offline on Saturday 02:00–06:00.',           type: 'announcement', is_read: 0, related_item_type: null, related_item_id: null, target_role: 'student', scheduled_at: D(45, 2), created_at: D(55, 10) },
+  ];
+  await insertRows('notification', rows, ['notification_id','user_id','title','message','type','is_read','related_item_type','related_item_id','target_role','scheduled_at','created_at']);
+  console.log(`   ✓ notification     (${rows.length} rows)`);
+}
+
+// ─── 15. ACTIVITY_LOG ────────────────────────────────────────────────────────
+async function seedActivityLog() {
+  const rows = [
+    { activity_log_id: 1,  user_id: 7,  activity_type: 'login',             description: 'User logged in.',                              related_item_type: null,         related_item_id: null, created_at: D(48, 9, 55) },
+    { activity_log_id: 2,  user_id: 7,  activity_type: 'quiz_start',        description: 'Started HTML Basics Quiz.',                    related_item_type: 'quiz',        related_item_id: 1,    created_at: D(48, 10) },
+    { activity_log_id: 3,  user_id: 7,  activity_type: 'quiz_submit',       description: 'Submitted HTML Basics Quiz attempt 1.',       related_item_type: 'quiz_attempt', related_item_id: 1,    created_at: D(48, 10, 18) },
+    { activity_log_id: 4,  user_id: 8,  activity_type: 'login',             description: 'User logged in.',                              related_item_type: null,         related_item_id: null, created_at: D(45, 10, 55) },
+    { activity_log_id: 5,  user_id: 8,  activity_type: 'quiz_start',        description: 'Started HTML Basics Quiz.',                    related_item_type: 'quiz',        related_item_id: 1,    created_at: D(45, 11) },
+    { activity_log_id: 6,  user_id: 8,  activity_type: 'quiz_submit',       description: 'Submitted HTML Basics Quiz.',                  related_item_type: 'quiz_attempt', related_item_id: 4,    created_at: D(45, 11, 20) },
+    { activity_log_id: 7,  user_id: 9,  activity_type: 'login',             description: 'User logged in.',                              related_item_type: null,         related_item_id: null, created_at: D(50, 8, 50) },
+    { activity_log_id: 8,  user_id: 9,  activity_type: 'quiz_start',        description: 'Started Limits Quiz.',                         related_item_type: 'quiz',        related_item_id: 4,    created_at: D(50, 9) },
+    { activity_log_id: 9,  user_id: 9,  activity_type: 'quiz_submit',       description: 'Submitted Limits Quiz.',                       related_item_type: 'quiz_attempt', related_item_id: 6,    created_at: D(50, 9, 22) },
+    { activity_log_id: 10, user_id: 4,  activity_type: 'course_create',     description: 'Created course: Web Development Fundamentals.', related_item_type: 'course',     related_item_id: 1,    created_at: D(110, 8, 10) },
+    { activity_log_id: 11, user_id: 4,  activity_type: 'quiz_create',       description: 'Created HTML Basics Quiz.',                    related_item_type: 'quiz',        related_item_id: 1,    created_at: D(60, 9) },
+    { activity_log_id: 12, user_id: 11, activity_type: 'lesson_view',       description: 'Viewed lesson: Intro to NumPy.',               related_item_type: 'lesson',      related_item_id: 14,   created_at: D(36, 9, 10) },
+    { activity_log_id: 13, user_id: 12, activity_type: 'lesson_view',       description: 'Viewed lesson: Matplotlib Basics.',            related_item_type: 'lesson',      related_item_id: 15,   created_at: D(35, 8, 30) },
+    { activity_log_id: 14, user_id: 1,  activity_type: 'user_create',       description: 'Admin created user student10.',                related_item_type: 'user',        related_item_id: 16,   created_at: D(116, 10, 20) },
+    { activity_log_id: 15, user_id: 10, activity_type: 'enrollment',        description: 'Enrolled in Calculus I.',                      related_item_type: 'course',      related_item_id: 3,    created_at: D(88, 9, 10) },
+    { activity_log_id: 16, user_id: 7,  activity_type: 'page_visit',        description: 'Viewed course: Web Development Fundamentals.',  related_item_type: 'course',      related_item_id: 1,    created_at: D(48, 9) },
+    { activity_log_id: 17, user_id: 7,  activity_type: 'video_watch',       description: 'Watched video: Intro to HTML.',                related_item_type: 'lesson',      related_item_id: 1,    created_at: D(48, 9, 5) },
+    { activity_log_id: 18, user_id: 8,  activity_type: 'page_visit',        description: 'Viewed course: Databases & SQL.',              related_item_type: 'course',      related_item_id: 7,    created_at: D(45, 10) },
+    { activity_log_id: 19, user_id: 13, activity_type: 'assignment_submit', description: 'Submitted OOP Classes Assignment draft.',      related_item_type: 'quiz_attempt', related_item_id: 12,   created_at: D(20, 14) },
+    { activity_log_id: 20, user_id: 2,  activity_type: 'profile_update',    description: 'Advisor updated their profile',                related_item_type: null,         related_item_id: null, created_at: D(7, 11) },
+  ];
+  await insertRows('activity_log', rows, ['activity_log_id','user_id','activity_type','description','related_item_type','related_item_id','created_at']);
+  console.log(`   ✓ activity_log     (${rows.length} rows)`);
+}
+
+// ─── DERIVED: average_score + is_at_risk ────────────────────────────────────
+// Mirror of the SQL studentController.submitQuiz runs at runtime. Keeps the
+// dashboards consistent before any real student has logged in.
+async function deriveStudentRiskFlags() {
+  await pool.query(`
+    UPDATE student_profile sp
+    LEFT JOIN (
+      SELECT user_id, AVG(score) AS avg_score
+      FROM quiz_attempt
+      WHERE status = 'graded' AND score IS NOT NULL
+      GROUP BY user_id
+    ) qa ON qa.user_id = sp.user_id
+    SET sp.average_score = COALESCE(ROUND(qa.avg_score, 2), 0),
+        sp.is_at_risk    = CASE WHEN qa.avg_score < 50 THEN 1 ELSE 0 END
+  `);
+  console.log('   ✓ derived (average_score, is_at_risk) from quiz_attempt');
 }
 
 seed();

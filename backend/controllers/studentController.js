@@ -79,6 +79,13 @@ exports.getDashboard = async (req, res) => {
       [userId]
     );
 
+    // Normalize due_date to ISO-8601 UTC for unambiguous frontend parsing.
+    for (const d of deadlines) {
+      if (!d.due_date) continue;
+      if (d.due_date instanceof Date) d.due_date = d.due_date.toISOString();
+      else d.due_date = new Date(d.due_date + 'Z').toISOString();
+    }
+
     res.json({
       profile: profile[0],
       enrollments,
@@ -347,7 +354,8 @@ exports.getCourseQuizzes = async (req, res) => {
       const attemptsTaken = Number(q.attempts_taken) || 0;
       const maxAttempts = Number(q.max_attempts) || 1;
       const attemptsFull = attemptsTaken >= maxAttempts;
-      const pastDue = q.due_date && new Date(q.due_date) < now;
+      // q.due_date arrives as a Date object thanks to timezone: 'Z' in db config
+      const pastDue = q.due_date && q.due_date < now;
       const hasAttempt = attemptsTaken > 0;
       const isGraded = Number(q.has_grade) === 1;
 
@@ -370,7 +378,10 @@ exports.getCourseQuizzes = async (req, res) => {
           ? (hasAttempt ? 'submitted' : 'available')
           : 'available';
       }
-      return { ...q, type: isAssignment ? 'assignment' : 'quiz', status, deadline_passed: !!pastDue };
+      // Serialize due_date as ISO 8601 UTC so the frontend renders it correctly
+      const out = { ...q, type: isAssignment ? 'assignment' : 'quiz', status, deadline_passed: !!pastDue };
+      if (q.due_date instanceof Date) out.due_date = q.due_date.toISOString();
+      return out;
     });
     res.json(result);
   } catch (error) {
@@ -620,7 +631,8 @@ exports.getAssignment = async (req, res) => {
     );
 
     const now = new Date();
-    const isClosed = quiz.due_date && new Date(quiz.due_date) < now;
+    const isClosed = quiz.due_date && quiz.due_date < now;
+    if (quiz.due_date instanceof Date) quiz.due_date = quiz.due_date.toISOString();
 
     res.json({
       quiz,
@@ -1005,12 +1017,24 @@ exports.getProgress = async (req, res) => {
       for (const course of activeCourses) {
         const nextModule = course.modules.find(m => m.status !== 'completed');
         if (nextModule) {
+          // Find the first published lesson inside this module so the
+          // frontend can deep-link the student straight into the lesson
+          // content instead of just dumping them on the course outline.
+          const [firstLessonRows] = await db.execute(
+            `SELECT lesson_id, title FROM lesson
+             WHERE module_id = ? AND status = 'published'
+             ORDER BY sort_order LIMIT 1`,
+            [nextModule.module_id]
+          );
+          const firstLesson = firstLessonRows[0] || null;
           recommendations.push({
             type: 'module',
             course_id: course.course_id,
             course_title: course.course_title,
             next_module_id: nextModule.module_id,
             next_module_title: nextModule.title,
+            next_lesson_id: firstLesson ? firstLesson.lesson_id : null,
+            next_lesson_title: firstLesson ? firstLesson.title : null,
             message: `Continue "${nextModule.title}" in ${course.course_title}`
           });
         }
@@ -1021,7 +1045,7 @@ exports.getProgress = async (req, res) => {
             course_title: course.course_title,
             quiz_id: q.quiz_id,
             quiz_title: q.title,
-            due_date: q.due_date,
+            due_date: q.due_date instanceof Date ? q.due_date.toISOString() : q.due_date,
             message: `Attempt quiz "${q.title}" in ${course.course_title}`
           });
         }
@@ -1082,7 +1106,11 @@ exports.getGradeDetail = async (req, res) => {
       });
     }
 
-    // Graded — return full per-question breakdown
+    // Graded — return full per-question breakdown.
+    // Cast TINYINT is_correct to a real boolean: it round-trips through
+    // mysql2 as either a boolean (when written via submitQuiz) or a number
+    // (when the row was seeded directly with a literal 0/1), and the
+    // frontend checks `=== true` for correct/wrong state.
     const [answers] = await db.execute(
       `SELECT a.answer_id,
               a.question_id,
@@ -1093,7 +1121,10 @@ exports.getGradeDetail = async (req, res) => {
               a.user_answer,
               CASE WHEN q.question_type = 'short_answer' THEN NULL
                    ELSE q.correct_answer END   AS correct_answer,
-              a.is_correct,
+              CASE WHEN a.is_correct IS NULL THEN NULL
+                   WHEN a.is_correct = 0      THEN 0
+                   WHEN a.is_correct = 1      THEN 1
+                   ELSE a.is_correct END      AS is_correct_raw,
               a.score_awarded,
               a.feedback                       AS auto_feedback,
               a.file_url,
@@ -1105,6 +1136,12 @@ exports.getGradeDetail = async (req, res) => {
        ORDER BY q.sort_order`,
       [attemptId]
     );
+    // Normalise the value into a JS boolean (or null for short_answer) so the
+    // front-end's strict `a.is_correct === true` check renders correctly.
+    const normalisedAnswers = answers.map((a) => ({
+      ...a,
+      is_correct: a.is_correct_raw == null ? null : a.is_correct_raw === 1,
+    }));
 
     // Score-band overall feedback (if configured by instructor)
     const [bandRows] = await db.execute(
@@ -1123,7 +1160,7 @@ exports.getGradeDetail = async (req, res) => {
       start_time: attempt.start_time,
       end_time: attempt.end_time,
       overall_feedback: bandRows.length > 0 ? bandRows[0].feedback_message : null,
-      answers
+      answers: normalisedAnswers
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

@@ -1,10 +1,9 @@
 import { token, theme, fontDisplay } from '../../../theme';
 import {
-  card, cardHeader, cardTitle, emptyState, emptyStateSmall, btnPrimary, btnGhost, btnSmall,
-  quizItem, quizIcon, quizInfo, quizName, quizMeta, quizStatus, statusPill,
+  card, cardHeader, cardTitle, emptyState, btnPrimary, btnGhost,
+  quizItem, quizIcon, quizInfo, quizName, quizMeta, statusPill,
   lessonRow, quizQuestion, radioLabel, gradeRow, gradeTitle, formInput, statusBadge, lessonsGrid,
 } from '../components/styles';
-import { BASE_URL } from '../../../services/api';
 
 export function ModulesPanel({ selectedCourse, modules, search, selectedLesson, activeQuiz, quizResult, onSelectLesson, onCompleteModule }) {
   const filteredModules = modules.filter(m =>
