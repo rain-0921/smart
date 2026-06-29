@@ -68,17 +68,17 @@ async function seed() {
     // ── 3. STUDENT_PROFILE ───────────────────────────────────────────────────
     await db.execute('TRUNCATE TABLE `student_profile`');
     const studentProfiles = [
-      // user_id, academic_level, programme, learning_preferences, advisor_id, gpa, is_at_risk
-      [7,  'Year 2', 'Bachelor of Computer Science', 'Visual learner',   2, 3.50, 0],
-      [8,  'Year 1', 'Bachelor of Computer Science', 'Reading/writing',  2, 2.80, 0],
-      [9,  'Year 3', 'Bachelor of Mathematics',      'Hands-on practice',3, 3.75, 0],
-      [10, 'Year 2', 'Bachelor of Mathematics',      'Visual learner',   3, 1.90, 1],
-      [11, 'Year 1', 'Bachelor of Data Science',     'Mixed',            2, 3.20, 0],
-      [12, 'Year 3', 'Bachelor of Data Science',     'Reading/writing',  3, 3.60, 0],
+      // user_id, academic_level, programme, learning_preferences, advisor_id, average_score, is_at_risk
+      [7,  'Year 2', 'Bachelor of Computer Science', 'Visual learner',   2, 87.50, 0],
+      [8,  'Year 1', 'Bachelor of Computer Science', 'Reading/writing',  2, 70.00, 0],
+      [9,  'Year 3', 'Bachelor of Mathematics',      'Hands-on practice',3, 93.75, 0],
+      [10, 'Year 2', 'Bachelor of Mathematics',      'Visual learner',   3, 47.50, 1],
+      [11, 'Year 1', 'Bachelor of Data Science',     'Mixed',            2, 80.00, 0],
+      [12, 'Year 3', 'Bachelor of Data Science',     'Reading/writing',  3, 90.00, 0],
     ];
     for (const p of studentProfiles) {
       await db.execute(
-        'INSERT INTO `student_profile` (user_id,academic_level,programme,learning_preferences,advisor_id,gpa,is_at_risk) VALUES (?,?,?,?,?,?,?)',
+        'INSERT INTO `student_profile` (user_id,academic_level,programme,learning_preferences,advisor_id,average_score,is_at_risk) VALUES (?,?,?,?,?,?,?)',
         p
       );
     }
@@ -417,14 +417,17 @@ async function seed() {
     await db.execute('TRUNCATE TABLE `notification`');
     const notifications = [
       // notification_id, user_id, title, message, type, is_read, related_item_type, related_item_id, target_role, scheduled_at, created_at
-      [1,  7,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  'student',    null, '2025-03-01 09:05:00'],
-      [2,  8,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  'student',    null, '2025-03-01 09:05:00'],
-      [3,  9,  'New Quiz Available',      'Limits Quiz is now open.',                 'quiz',        1, 'quiz',       4,  'student',    null, '2025-03-05 09:05:00'],
-      [4,  10, 'At-Risk Alert',           'Your GPA has dropped below 2.0.',          'alert',       0, 'student_profile', 10, 'student', null,'2025-03-10 08:00:00'],
-      [5,  2,  'Student At Risk',         'student04 is at risk. Please follow up.',  'alert',       0, 'student_profile', 10, 'advisor', null,'2025-03-10 08:01:00'],
-      [6,  7,  'Quiz Graded',             'Your HTML Basics Quiz has been graded.',   'quiz_result', 1, 'quiz_attempt', 2,'student',    null, '2025-03-23 10:00:00'],
-      [7,  11, 'Course Reminder',         'Complete Module 9 before the deadline.',   'reminder',    0, 'module',     9,  'student',    '2025-04-20 08:00:00', '2025-04-18 08:00:00'],
-      [8,  1,  'System Maintenance',      'Scheduled maintenance on Apr 30.',         'system',      0, null,         null,'admin',      null, '2025-04-01 10:00:00'],
+      // NOTE: target_role is NULL — these are user-specific notifications.
+      // Setting target_role='student' would make them visible to ALL students via the
+      // OR target_role='student' condition in getNotifications, which is not intended.
+      [1,  7,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  null,         null, '2025-03-01 09:05:00'],
+      [2,  8,  'New Quiz Available',      'HTML Basics Quiz is now open.',            'quiz',        0, 'quiz',       1,  null,         null, '2025-03-01 09:05:00'],
+      [3,  9,  'New Quiz Available',      'Limits Quiz is now open.',                 'quiz',        1, 'quiz',       4,  null,         null, '2025-03-05 09:05:00'],
+      [4,  10, 'At-Risk Alert',           'Your GPA has dropped below 2.0.',          'alert',       0, 'student_profile', 10, null,       null,'2025-03-10 08:00:00'],
+      [5,  3,  'Student At Risk',         'student04 is at risk. Please follow up.',  'alert',       0, 'student_profile', 10, null,         null,'2025-03-10 08:01:00'],
+      [6,  7,  'Quiz Graded',             'Your HTML Basics Quiz has been graded.',   'quiz_result', 1, 'quiz_attempt', 2,  null,         null, '2025-03-23 10:00:00'],
+      [7,  11, 'Course Reminder',         'Complete Module 9 before the deadline.',   'reminder',    0, 'module',     9,  null,         '2025-04-20 08:00:00', '2025-04-18 08:00:00'],
+      [8,  1,  'System Maintenance',      'Scheduled maintenance on Apr 30.',         'system',      0, null,         null,null,          null, '2025-04-01 10:00:00'],
     ];
     for (const n of notifications) {
       await db.execute(

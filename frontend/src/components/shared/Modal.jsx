@@ -10,7 +10,7 @@ export default function Modal({ title, onClose, children, wide = false }) {
   }, [onClose]);
 
   return (
-    <div style={styles.modalOverlay} onClick={onClose}>
+    <div style={styles.modalOverlay}>
       <div
         style={{ ...styles.modalBox, maxWidth: wide ? 860 : 520 }}
         onClick={(e) => e.stopPropagation()}

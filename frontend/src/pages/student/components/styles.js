@@ -63,9 +63,12 @@ export const greetingTitle = { fontFamily: '"DM Serif Display", serif', fontSize
 export const greetingSub   = { fontSize: 14, color: theme.textMuted };
 
 export const statusPill = (type) => ({
-  due:  { background: 'rgba(249,115,22,0.12)', color: theme.accent4 },
-  open: { background: 'rgba(52,211,153,0.12)', color: theme.accent3 },
-  done: { background: 'rgba(108,143,255,0.12)', color: theme.accent },
+  due:       { background: 'rgba(249,115,22,0.12)', color: theme.accent4 },
+  available: { background: 'rgba(52,211,153,0.12)', color: theme.accent3 },
+  graded:    { background: 'rgba(52,211,153,0.12)', color: theme.accent3 },
+  completed: { background: 'rgba(52,211,153,0.12)', color: theme.accent3 },
+  submitted: { background: 'rgba(52,211,153,0.12)', color: theme.accent3 },
+  closed:    { background: 'rgba(251,113,133,0.12)', color: theme.accent5 },
 }[type] || { background: theme.surface2, color: theme.textMuted });
 
 export const gradeBadgeTone = (g) => {

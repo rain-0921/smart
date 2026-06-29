@@ -11,7 +11,7 @@ export default function AdvisorHomeSection({ dashboard, loading, unreadCount, on
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard label="My students"    value={dashboard.totalStudents} accent={token.ink}    icon="people" />
         <StatCard label="At risk"        value={dashboard.atRiskCount}   accent={token.danger} icon="warn" />
-        <StatCard label="Average GPA"    value={parseFloat(dashboard.avgGpa).toFixed(2)} accent={token.brass} icon="spark" />
+        <StatCard label="Avg Score"    value={dashboard.avgScore != null ? `${parseFloat(dashboard.avgScore).toFixed(2)}%` : '—'} accent={token.brass} icon="spark" />
         <StatCard label="Unread alerts"  value={unreadCount}             accent={token.info}   icon="bell" />
       </div>
 

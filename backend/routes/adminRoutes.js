@@ -24,6 +24,11 @@ router.post('/courses',                   admin.addCourse);
 router.put('/courses/:id',                admin.editCourse);
 router.patch('/courses/:id/archive',      admin.archiveCourse);
 
+// Advisor Assignment
+router.get('/students',               admin.getAllStudentsWithAdvisor);
+router.get('/advisors',                admin.getAllAdvisors);
+router.patch('/students/:studentId/advisor', admin.assignAdvisor);
+
 // Enrollments
 router.get('/enrollments',                admin.getAllEnrollments);
 router.post('/enrollments',               admin.addEnrollment);

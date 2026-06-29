@@ -1,8 +1,8 @@
 import { token, fontMono } from '../../../theme';
 
-export function gpaColor(gpa) {
-  const v = parseFloat(gpa || 0);
-  return v >= 3 ? token.good : v >= 2 ? token.warn : token.danger;
+export function avgColor(avgScore) {
+  const v = parseFloat(avgScore || 0);
+  return v >= 70 ? token.good : v >= 50 ? token.warn : token.danger;
 }
 
 export function scoreColor(score) {
@@ -10,8 +10,9 @@ export function scoreColor(score) {
   return v >= 70 ? token.good : v >= 50 ? token.warn : token.danger;
 }
 
-export function gpaText(gpa) {
-  return parseFloat(gpa || 0).toFixed(2);
+export function avgText(avgScore) {
+  if (avgScore == null) return '—';
+  return `${parseFloat(avgScore).toFixed(2)}%`;
 }
 
 export function pctText(p, decimals = 1) {
@@ -49,6 +50,9 @@ export function StatusBadge({ status }) {
     </span>
   );
 }
+
+export const gpaColor = avgColor;
+export const gpaText = avgText;
 
 export function StatusPill({ status, mono = false }) {
   return (

@@ -6,7 +6,7 @@ import { formLabel, formInput, btnPrimary, table, th, td } from '../components/s
 const EMAIL_SMIS_REGEX = /^[^@\s]+@smis\.edu$/;
 const PHONE_REGEX = /^\+?[\d\s\-]*$/;
 
-export function AdminUserModal({ editingUser, userForm, instructors, departments, onChange, onClose, onSubmit }) {
+export function AdminUserModal({ editingUser, userForm, instructors, departments, onChange, onClose, onSubmit, onError }) {
   const [errors, setErrors] = useState({});
 
   const validate = () => {
@@ -24,9 +24,14 @@ export function AdminUserModal({ editingUser, userForm, instructors, departments
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validate()) return;
-    onSubmit();
+    try {
+      await onSubmit();
+    } catch (err) {
+      const msg = err?.response?.data?.message;
+      setErrors({ form: msg || 'Something went wrong' });
+    }
   };
 
   const handleChange = (key, value) => {
@@ -36,6 +41,11 @@ export function AdminUserModal({ editingUser, userForm, instructors, departments
 
   return (
     <Modal title={editingUser ? 'Edit User' : 'Add New User'} onClose={onClose}>
+      {errors.form && (
+        <div style={{ background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#B91C1C' }}>
+          {errors.form}
+        </div>
+      )}
       {[
         { label: 'Username', key: 'username', type: 'text' },
         { label: 'Email',    key: 'email',    type: 'email', error: errors.email },

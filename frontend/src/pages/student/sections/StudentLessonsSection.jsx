@@ -2,7 +2,7 @@ import { token, theme, fontDisplay } from '../../../theme';
 import {
   card, cardHeader, cardTitle, emptyState, emptyStateSmall, btnPrimary, btnGhost, btnSmall,
   quizItem, quizIcon, quizInfo, quizName, quizMeta, quizStatus, statusPill,
-  lessonRow, quizQuestion, radioLabel, gradeRow, gradeTitle, formInput, statusBadge,
+  lessonRow, quizQuestion, radioLabel, gradeRow, gradeTitle, formInput, statusBadge, lessonsGrid,
 } from '../components/styles';
 import { BASE_URL } from '../../../services/api';
 
@@ -65,7 +65,7 @@ export function ModulesPanel({ selectedCourse, modules, search, selectedLesson, 
           </div>
           {mod.progress_status !== 'completed' &&
             <button style={{ ...btnPrimary, marginTop: 12 }} onClick={() => onCompleteModule(mod.module_id)}>
-              Mark Module Complete
+              {(mod.progress_status || 'not_started') === 'not_started' ? 'Start Module' : 'Mark Module Complete'}
             </button>
           }
         </div>
@@ -208,6 +208,70 @@ export function LessonContentPanel({ selectedLesson, modules, onClose, onComplet
   if (!selectedLesson) return null;
   const parentMod = modules.find(m => m.lessons?.some(l => l.lesson_id === selectedLesson.lesson_id));
 
+  // Video block
+  const videoContent = (() => {
+    if (selectedLesson.content_type !== 'video' || !selectedLesson.content_url) return null;
+    const url = selectedLesson.content_url;
+    const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/);
+    const ytEmbed = ytMatch ? `https://www.youtube.com/embed/${ytMatch[1]}` : null;
+    if (ytEmbed) {
+      return (
+        <div style={{ borderRadius: token.radiusSm, overflow: 'hidden', marginBottom: 16, aspectRatio: '16/9', background: '#000' }}>
+          <iframe src={ytEmbed} title={selectedLesson.title} style={{ width: '100%', height: '100%', border: 'none' }} allowFullScreen />
+        </div>
+      );
+    }
+    return (
+      <div style={{ borderRadius: token.radiusSm, marginBottom: 16, background: `linear-gradient(135deg, ${token.ink}, #2454A6)`, aspectRatio: '16/9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, color: '#fff', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ fontSize: 48, opacity: 0.9 }}>▶</div>
+        <div style={{ fontFamily: fontDisplay, fontSize: 15, opacity: 0.85, textAlign: 'center', padding: '0 24px' }}>{selectedLesson.title}</div>
+        <a href={url} target="_blank" rel="noreferrer" style={{ background: token.brass, color: '#fff', textDecoration: 'none', padding: '9px 20px', borderRadius: token.radiusSm, fontSize: 13, fontWeight: 600 }}>Open Video ↗</a>
+      </div>
+    );
+  })();
+
+  const videoNote = selectedLesson.content_type === 'video' ? (
+    <div style={{ fontSize: 13, color: theme.textMuted, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+      <span style={{ fontSize: 16 }}>ℹ️</span>Video content for this lesson. Watch the full video to complete this lesson.
+    </div>
+  ) : null;
+
+  const pdfContent = selectedLesson.content_type === 'pdf' && selectedLesson.content_url ? (
+    <div>
+      <div style={{ borderRadius: token.radiusSm, overflow: 'hidden', border: `1px solid ${token.line}`, marginBottom: 14, height: 420, background: token.surface2 }}>
+        <iframe src={selectedLesson.content_url} title={selectedLesson.title} style={{ width: '100%', height: '100%', border: 'none' }} />
+      </div>
+      <a href={selectedLesson.content_url} target="_blank" rel="noreferrer" style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none', marginBottom: 0 }}>📄 Open PDF in new tab ↗</a>
+    </div>
+  ) : null;
+
+  const textContent = selectedLesson.content_type === 'text' && selectedLesson.content_text ? (
+    <div style={{ background: token.surface2, border: `1px solid ${token.line}`, borderRadius: token.radiusSm, padding: '20px 22px', fontSize: 14, lineHeight: 1.75, color: token.ink, whiteSpace: 'pre-wrap', fontFamily: '"DM Sans", sans-serif', marginBottom: 16 }}>
+      {selectedLesson.content_text}
+    </div>
+  ) : null;
+
+  const otherContent = selectedLesson.content_type === 'other' && selectedLesson.content_url ? (
+    <div style={{ padding: 24, borderRadius: theme.radiusSm, textAlign: 'center', background: theme.surface2, border: `1px solid ${theme.border}`, marginBottom: 16 }}>
+      <div style={{ fontSize: 40, marginBottom: 8 }}>{selectedLesson.content_url.match(/\.(jpe?g|png|gif)$/i) ? '🖼️' : '📎'}</div>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Attached material</div>
+      <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>Click below to open or download the file.</div>
+      <a href={selectedLesson.content_url} target="_blank" rel="noreferrer" style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none' }}>Open material ↗</a>
+    </div>
+  ) : null;
+
+  const emptyContent = !selectedLesson.content_url && !selectedLesson.content_text ? (
+    <div style={{ ...emptyState, paddingTop: 24 }}>
+      <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+      <div>Content for this lesson hasn't been uploaded yet.</div>
+    </div>
+  ) : null;
+
+  const isNotCompleted = parentMod && parentMod.progress_status !== 'completed';
+  const buttonLabel = isNotCompleted
+    ? ((parentMod.progress_status || 'not_started') === 'not_started' ? '▶ Start Module' : '✓ Mark Module Complete')
+    : null;
+
   return (
     <div style={{ ...card, marginBottom: 16 }} className="std-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
@@ -229,366 +293,194 @@ export function LessonContentPanel({ selectedLesson, modules, onClose, onComplet
                 : '📎 Material'}
             </span>
             {selectedLesson.duration_minutes && (
-              <span style={{ fontSize: 11, color: theme.textDim }}>
-                ⏱ {selectedLesson.duration_minutes} min
-              </span>
+              <span style={{ fontSize: 11, color: theme.textDim }}>⏱ {selectedLesson.duration_minutes} min</span>
             )}
           </div>
           <h3 style={{ margin: 0, fontFamily: fontDisplay, fontSize: 17, color: token.ink, lineHeight: 1.3 }}>
             {selectedLesson.title}
           </h3>
         </div>
-        <button
-          style={{ ...btnGhost, padding: '6px 12px', fontSize: 12, marginLeft: 12, flexShrink: 0 }}
-          onClick={onClose}
-        >← Back</button>
+        <button style={{ ...btnGhost, padding: '6px 12px', fontSize: 12, marginLeft: 12, flexShrink: 0 }} onClick={onClose}>← Back</button>
       </div>
 
       <div style={{ height: 1, background: token.line, marginBottom: 16 }} />
 
-      {selectedLesson.content_type === 'video' && selectedLesson.content_url && (() => {
-        const url = selectedLesson.content_url;
-        const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/);
-        const ytEmbed = ytMatch ? `https://www.youtube.com/embed/${ytMatch[1]}` : null;
-        return ytEmbed ? (
-          <div style={{ borderRadius: token.radiusSm, overflow: 'hidden', marginBottom: 16, aspectRatio: '16/9', background: '#000' }}>
-            <iframe
-              src={ytEmbed}
-              title={selectedLesson.title}
-              style={{ width: '100%', height: '100%', border: 'none' }}
-              allowFullScreen
-            />
-          </div>
-        ) : (
-          <div style={{
-            borderRadius: token.radiusSm, marginBottom: 16,
-            background: `linear-gradient(135deg, ${token.ink}, #2454A6)`,
-            aspectRatio: '16/9', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 14,
-            color: '#fff', position: 'relative', overflow: 'hidden'
-          }}>
-            <div style={{ fontSize: 48, opacity: 0.9 }}>▶</div>
-            <div style={{ fontFamily: fontDisplay, fontSize: 15, opacity: 0.85, textAlign: 'center', padding: '0 24px' }}>
-              {selectedLesson.title}
-            </div>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                background: token.brass, color: '#fff', textDecoration: 'none',
-                padding: '9px 20px', borderRadius: token.radiusSm,
-                fontSize: 13, fontWeight: 600
-              }}
-            >
-              Open Video ↗
-            </a>
-          </div>
-        );
-      })()}
+      {videoContent}
+      {videoNote}
+      {pdfContent}
+      {textContent}
+      {otherContent}
+      {emptyContent}
 
-      {selectedLesson.content_type === 'video' && (
-        <div style={{ fontSize: 13, color: theme.textMuted, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 16 }}>ℹ️</span>
-          Video content for this lesson. Watch the full video to complete this lesson.
+      {buttonLabel && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${token.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: theme.textMuted }}>Finished this lesson?</span>
+          <button style={btnPrimary} onClick={() => { onCompleteModule(parentMod.module_id); onClose(); }}>
+            {buttonLabel}
+          </button>
         </div>
       )}
-
-      {selectedLesson.content_type === 'pdf' && selectedLesson.content_url && (
-        <div>
-          <div style={{
-            borderRadius: token.radiusSm, overflow: 'hidden',
-            border: `1px solid ${token.line}`, marginBottom: 14,
-            height: 420, background: token.surface2
-          }}>
-            <iframe
-              src={selectedLesson.content_url}
-              title={selectedLesson.title}
-              style={{ width: '100%', height: '100%', border: 'none' }}
-            />
-          </div>
-          <a
-            href={selectedLesson.content_url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none', marginBottom: 0 }}
-          >
-            📄 Open PDF in new tab ↗
-          </a>
-        </div>
-      )}
-
-      {selectedLesson.content_type === 'text' && selectedLesson.content_text && (
-        <div style={{
-          background: token.surface2,
-          border: `1px solid ${token.line}`,
-          borderRadius: token.radiusSm,
-          padding: '20px 22px',
-          fontSize: 14, lineHeight: 1.75,
-          color: token.ink,
-          whiteSpace: 'pre-wrap',
-          fontFamily: '"DM Sans", sans-serif',
-        }}>
-          {selectedLesson.content_text}
-        </div>
-      )}
-
-      {selectedLesson.content_type === 'other' && selectedLesson.content_url && (
-        <div style={{
-          padding: 24, borderRadius: theme.radiusSm, textAlign: 'center',
-          background: theme.surface2, border: `1px solid ${theme.border}`
-        }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>
-            {selectedLesson.content_url.match(/\.(jpe?g|png|gif)$/i) ? '🖼️' : '📎'}
-          </div>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Attached material</div>
-          <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 14 }}>
-            Click below to open or download the file.
-          </div>
-          <a
-            href={selectedLesson.content_url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ ...btnPrimary, display: 'inline-block', textDecoration: 'none' }}
-          >
-            Open material ↗
-          </a>
-        </div>
-      )}
-
-      {!selectedLesson.content_url && !selectedLesson.content_text && (
-        <div style={{ ...emptyState, paddingTop: 24 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
-          <div>Content for this lesson hasn't been uploaded yet.</div>
-        </div>
-      )}
-
-      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${token.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 12, color: theme.textMuted }}>Finished this lesson?</span>
-        <button
-          style={btnPrimary}
-          onClick={() => {
-            if (parentMod && parentMod.progress_status !== 'completed') onCompleteModule(parentMod.module_id);
-            onClose();
-          }}
-        >
-          ✓ Mark Module Complete
-        </button>
-      </div>
     </div>
   );
 }
 
-export function QuizListPanel({ quizzes, onStartQuiz, onOpenAssignment }) {
+export function QuizListPanel({ quizzes, onStartQuiz, onOpenAssignment, onViewGrade }) {
+  const getAction = (q) => {
+    if (q.status === 'available' || q.status === 'due') {
+      return q.type === 'assignment' ? 'Attempt' : 'Start';
+    }
+    if (q.status === 'submitted' || q.status === 'completed' || q.status === 'graded') {
+      // Allow resubmit for file assignments (unless the deadline has passed)
+      if (q.type === 'assignment' && !q.deadline_passed) return 'Resubmit';
+      return q.latest_attempt_id ? 'View Result' : null;
+    }
+    return null; // closed — no button
+  };
+
+  const handleClick = (q) => {
+    const action = getAction(q);
+    if (!action) return;
+    if (action === 'View Result') {
+      // Pass the attempt id, NOT the quiz id — the backend expects quiz_attempt_id
+      onViewGrade(q.latest_attempt_id);
+    } else if (q.type === 'assignment') {
+      onOpenAssignment(q.quiz_id);
+    } else {
+      onStartQuiz(q.quiz_id);
+    }
+  };
+
   return (
     <div style={card}>
       <div style={cardHeader}>
         <div style={cardTitle}>Quizzes & Assignments</div>
       </div>
-      {quizzes.length === 0
-        ? <div style={emptyStateSmall}>No quizzes yet.</div>
-        : quizzes.map(q => (
-          <div key={q.quiz_id} style={quizItem}>
-            <div style={{ ...quizIcon, background: q.submission_type !== 'online_quiz' ? 'rgba(167,139,250,0.12)' : 'rgba(108,143,255,0.12)' }}>
-              {q.submission_type !== 'online_quiz' ? '📎' : '✎'}
+      {quizzes && quizzes.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '20px 0', color: theme.textMuted, fontSize: 13 }}>
+          No quizzes or assignments available yet.
+        </div>
+      )}
+      {quizzes && quizzes.map((q) => {
+        const action = getAction(q);
+        const isClosed = q.status === 'closed';
+        return (
+          <div
+            key={q.quiz_id}
+            style={{
+              ...quizItem,
+              opacity: isClosed ? 0.5 : 1,
+              cursor: action ? 'pointer' : 'default',
+            }}
+            onClick={() => handleClick(q)}
+          >
+            <div style={{ ...quizIcon, background: q.type === 'assignment' ? 'rgba(251,176,64,0.12)' : 'rgba(52,211,153,0.12)' }}>
+              {q.type === 'assignment' ? '✎' : '📋'}
             </div>
             <div style={quizInfo}>
               <div style={quizName}>{q.title}</div>
               <div style={quizMeta}>
-                {q.submission_type !== 'online_quiz' ? 'File Upload' : `Attempts: ${q.attempts_taken}/${q.max_attempts}`}
-              </div>
-              {q.due_date &&
-                <div style={{
-                  ...quizMeta,
-                  color: new Date(q.due_date) < new Date() ? theme.accent5 : theme.accent4
-                }}>
-                  {new Date(q.due_date) < new Date() ? 'Closed ' : 'Due '}{new Date(q.due_date).toLocaleDateString()}
-                </div>
-              }
-            </div>
-            {q.submission_type !== 'online_quiz'
-              ? (() => {
-                  const closed = q.due_date && new Date(q.due_date) < new Date();
-                  return (
-                    <button
-                      style={{ ...btnSmall, background: theme.accent2 }}
-                      disabled={closed}
-                      title={closed ? 'The deadline for this assignment has passed' : undefined}
-                      onClick={() => onOpenAssignment(q.quiz_id)}
-                    >
-                      {closed ? 'Closed' : (q.attempts_taken > 0 ? 'View / Resubmit' : 'Submit')}
-                    </button>
-                  );
-                })()
-              : (() => {
-                  const closed = q.due_date && new Date(q.due_date) < new Date();
-                  if (closed) return <span style={{ ...quizStatus, ...statusPill('done') }}>Closed</span>;
-                  return q.attempts_taken < q.max_attempts
-                    ? <button style={btnSmall} onClick={() => onStartQuiz(q.quiz_id)}>Start</button>
-                    : <span style={{ ...quizStatus, ...statusPill('done') }}>Completed</span>;
-                })()
-            }
-          </div>
-        ))
-      }
-    </div>
-  );
-}
-
-export function GradesPanel({ grades, onOpenGradeDetail }) {
-  return (
-    <div style={{ ...card, marginTop: 16 }}>
-      <div style={cardHeader}>
-        <div style={cardTitle}>My Grades</div>
-      </div>
-      {grades.length === 0
-        ? <div style={emptyStateSmall}>No grades yet.</div>
-        : grades.map(g => (
-          <div key={g.quiz_attempt_id} style={gradeRow}>
-            <div>
-              <div style={gradeTitle}>{g.quiz_title}</div>
-              <div style={{ color: theme.textMuted, fontSize: 11 }}>
-                {g.status === 'graded' ? 'Graded' : 'Pending'}
+                {q.type === 'assignment'
+                  ? `Due: ${q.due_date ? new Date(q.due_date).toLocaleDateString() : 'No deadline'}`
+                  : `${q.max_attempts} attempt${q.max_attempts !== 1 ? 's' : ''} · ${q.time_limit_minutes || '?'} min`}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 48, height: 26, borderRadius: 6, fontSize: 11, fontWeight: 700,
-                fontFamily: fontDisplay,
-                background: g.status === 'graded'
-                  ? (g.score >= 70 ? 'rgba(52,211,153,0.12)' : g.score >= 50 ? 'rgba(249,115,22,0.12)' : 'rgba(251,113,133,0.12)')
-                  : theme.surface2,
-                color: g.status === 'graded'
-                  ? (g.score >= 70 ? theme.accent3 : g.score >= 50 ? theme.accent4 : theme.accent5)
-                  : theme.textMuted,
-              }}>
-                {g.status === 'graded' ? `${parseFloat(g.score).toFixed(0)}%` : '—'}
-              </div>
-              {g.quiz_attempt_id && (
-                <button style={btnSmall} onClick={() => onOpenGradeDetail(g.quiz_attempt_id)}>
-                  Detail
+              <span style={statusPill(q.status)}>
+                {q.status === 'available' ? 'Available'
+                  : q.status === 'due' ? 'Due Soon'
+                  : q.status === 'submitted' ? 'Submitted'
+                  : q.status === 'completed' ? 'Completed'
+                  : q.status === 'graded' ? 'Graded'
+                  : q.status === 'closed' ? 'Closed'
+                  : q.status || '—'}
+              </span>
+              {action && (
+                <button
+                  style={{
+                    background: token.brass,
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: theme.radiusSm,
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                  onClick={e => { e.stopPropagation(); handleClick(q); }}
+                >
+                  {action}
                 </button>
               )}
             </div>
           </div>
-        ))
-      }
+        );
+      })}
     </div>
   );
 }
 
-export function AssignmentPanel({
-  assignmentData, assignmentFile, assignmentNote, assignmentUploading,
-  onChangeFile, onChangeNote, onSubmit, onClose,
-}) {
-  if (!assignmentData) return null;
-  const { quiz, submission, deadline_passed } = assignmentData;
-  const isClosed = deadline_passed;
-  const isGraded = submission?.status === 'graded';
-
+export function GradeDetailModal({ grade, onClose }) {
+  if (!grade) return null;
   return (
-    <div style={{ ...card, marginBottom: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3 style={{ margin: 0, fontFamily: fontDisplay, color: theme.text }}>
-          📎 {quiz.title}
-        </h3>
-        <button style={btnGhost} onClick={onClose}>← Back</button>
-      </div>
-
-      {quiz.description && (
-        <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 0, marginBottom: 14 }}>
-          {quiz.description}
-        </p>
-      )}
-
-      {quiz.due_date && (
-        <div style={{ fontSize: 13, color: isClosed ? theme.accent5 : theme.accent4, marginBottom: 14 }}>
-          {isClosed ? '⛔ Deadline has passed' : `⏱ Due: ${new Date(quiz.due_date).toLocaleString()}`}
-        </div>
-      )}
-
-      {submission && (
-        <div style={{ padding: 12, background: theme.surface2, borderRadius: theme.radiusSm, marginBottom: 16, fontSize: 13 }}>
-          <div style={{ fontWeight: 600, color: theme.text, marginBottom: 6 }}>Current Submission</div>
-          <div style={{ color: theme.textMuted }}>
-            Status: <span style={{ color: submission.status === 'graded' ? theme.accent3 : theme.accent4, fontWeight: 600 }}>
-              {submission.status}
-            </span>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+      <div style={{ background: 'white', borderRadius: 12, padding: '28px 28px 24px', maxWidth: 520, width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h3 style={{ margin: 0, fontFamily: fontDisplay }}>{grade.quiz_title}</h3>
+            <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
+              Submitted {grade.submitted_at ? new Date(grade.submitted_at).toLocaleDateString() : '—'}
+            </div>
           </div>
-          {submission.score != null && (
-            <div style={{ color: theme.textMuted }}>
-              Score: <span style={{ color: theme.accent3, fontWeight: 700 }}>{parseFloat(submission.score).toFixed(1)}%</span>
-            </div>
-          )}
-          {submission.file_url && (
-            <div style={{ marginTop: 6 }}>
-              <a href={`${BASE_URL}${submission.file_url}`} target="_blank" rel="noreferrer"
-                style={{ color: theme.accent, fontSize: 13 }}>
-                📄 View submitted file
-              </a>
-            </div>
-          )}
-          {submission.feedback && (
-            <div style={{ marginTop: 6, color: theme.textMuted }}>
-              Feedback: {submission.feedback}
-            </div>
-          )}
+          <button style={{ ...btnGhost, padding: '6px 12px' }} onClick={onClose}>✕</button>
         </div>
-      )}
 
-      {!isClosed && !isGraded && (
-        <div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 6 }}>
-              {submission ? 'Replace Submission (resubmit)' : 'Upload File'}
-              <span style={{ color: theme.textMuted, fontWeight: 400, marginLeft: 6 }}>
-                PDF, DOCX, PPTX, ZIP, JPG, PNG · max 50 MB
-              </span>
-            </label>
-            <input
-              type="file"
-              accept=".pdf,.docx,.pptx,.zip,.jpg,.jpeg,.png"
-              onChange={e => onChangeFile(e.target.files[0] || null)}
-              style={{ display: 'block', fontSize: 13, color: theme.text, width: '100%' }}
-            />
-            {assignmentFile && (
-              <div style={{ fontSize: 12, color: theme.accent3, marginTop: 4 }}>
-                Selected: {assignmentFile.name} ({(assignmentFile.size / 1024 / 1024).toFixed(2)} MB)
+        <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+          {[
+            { label: 'Score', value: `${grade.score}%`, color: grade.score >= 70 ? theme.accent3 : grade.score >= 50 ? theme.accent4 : theme.accent5 },
+            { label: 'Points', value: `${grade.points_earned}/${grade.points_total}`, color: theme.text },
+            { label: 'Status', value: grade.status, color: grade.status === 'graded' ? theme.accent3 : theme.accent4 },
+          ].map(s => (
+            <div key={s.label} style={{ flex: 1, background: token.surface2, borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+              <div style={{ fontSize: 11, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>{s.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {grade.feedback && (
+          <div style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)', borderRadius: 8, padding: '12px 16px', marginBottom: 16, fontSize: 13 }}>
+            💡 {grade.feedback}
+          </div>
+        )}
+
+        {grade.answers && grade.answers.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 }}>Answer Breakdown</div>
+            {grade.answers.map((a, i) => (
+              <div key={i} style={{ ...gradeRow, borderBottom: i < grade.answers.length - 1 ? `1px solid ${theme.border}` : 'none' }}>
+                <div style={gradeTitle}>Q{i + 1}. {a.question_text}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 4 }}>Your answer: <strong>{a.user_answer || '(no answer)'}</strong></div>
+                {a.is_correct === false && a.correct_answer && (
+                  <div style={{ fontSize: 12, color: theme.accent3, marginBottom: 4 }}>Correct: <strong>{a.correct_answer}</strong></div>
+                )}
+                <div style={{ fontSize: 12, color: a.is_correct ? theme.accent3 : theme.accent5 }}>
+                  {a.is_correct ? '✅ Correct' : '❌ Incorrect'}{a.feedback ? ` — ${a.feedback}` : ''}
+                </div>
               </div>
-            )}
+            ))}
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.text, marginBottom: 6 }}>
-              Note (optional)
-            </label>
-            <textarea
-              style={{ width: '100%', background: theme.surface2, border: `1px solid ${theme.border2}`, borderRadius: theme.radiusSm, padding: '8px 12px', color: theme.text, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', minHeight: 60, boxSizing: 'border-box' }}
-              placeholder="Add a note to your instructor…"
-              value={assignmentNote}
-              onChange={e => onChangeNote(e.target.value)}
-            />
-          </div>
-          <button
-            style={{ ...btnSmall, width: '100%', padding: '10px 0', fontSize: 14, opacity: assignmentUploading ? 0.6 : 1 }}
-            onClick={onSubmit}
-            disabled={assignmentUploading}
-          >
-            {assignmentUploading ? 'Uploading…' : submission ? '↑ Resubmit' : '↑ Submit Assignment'}
-          </button>
-        </div>
-      )}
+        )}
 
-      {isClosed && !submission && (
-        <div style={{ textAlign: 'center', color: theme.accent5, fontSize: 14, padding: '20px 0' }}>
-          The deadline has passed. No submission recorded.
+        <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+          <button style={btnGhost} onClick={onClose}>Close</button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-export default function StudentLessonsSection({
+const StudentLessonsSection = function StudentLessonsSection({
   selectedCourse, modules, quizzes, grades, search,
   activeQuiz, quizResult, quizAnswers, timeLeft, formatTime,
   selectedLesson, assignmentData, assignmentFile, assignmentNote, assignmentUploading,
@@ -598,69 +490,129 @@ export default function StudentLessonsSection({
   onChangeAssignmentFile, onChangeAssignmentNote, onSubmitAssignment,
   onCloseAssignment, onCloseLesson,
 }) {
-  if (!selectedCourse) {
+  if (!selectedCourse) return <ModulesPanel selectedCourse={null} modules={[]} search={search} selectedLesson={null} activeQuiz={null} quizResult={null} onSelectLesson={() => {}} onCompleteModule={() => {}} />;
+  if (selectedLesson) {
     return (
-      <ModulesPanel
-        selectedCourse={null}
-        modules={[]}
-        search={search}
-        selectedLesson={null}
-        activeQuiz={null}
-        quizResult={null}
-        onSelectLesson={onSelectLesson}
+      <LessonContentPanel
+        selectedLesson={selectedLesson}
+        modules={modules}
+        onClose={onCloseLesson}
         onCompleteModule={onCompleteModule}
       />
     );
   }
+  if (activeQuiz) {
+    return (
+      <QuizPlayerPanel
+        activeQuiz={activeQuiz}
+        timeLeft={timeLeft}
+        formatTime={formatTime}
+        quizAnswers={quizAnswers}
+        onChangeAnswer={onChangeAnswer}
+        onSubmit={() => onSubmitQuiz()}
+      />
+    );
+  }
+  if (quizResult) {
+    return (
+      <QuizResultPanel
+        quizResult={quizResult}
+        onClose={onCloseQuizResult}
+      />
+    );
+  }
+  if (assignmentData) {
+    const submitted = !!assignmentData.submission;
+    return (
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontFamily: fontDisplay }}>{assignmentData.quiz.title || 'Assignment'}</h3>
+          <button style={btnGhost} onClick={onCloseAssignment}>✕</button>
+        </div>
+        <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 16 }}>
+          {assignmentData.quiz.description || 'Complete this assignment and submit.'}
+        </p>
+        {assignmentData.quiz.due_date && (
+          <p style={{ fontSize: 12, color: theme.accent4, marginBottom: 12 }}>
+            Due: {new Date(assignmentData.quiz.due_date).toLocaleDateString()}
+          </p>
+        )}
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) minmax(320px, 1.2fr)', gap: 20 }}>
-      <div>
-        <ModulesPanel
-          selectedCourse={selectedCourse}
-          modules={modules}
-          search={search}
-          selectedLesson={selectedLesson}
-          activeQuiz={activeQuiz}
-          quizResult={null}
-          onSelectLesson={onSelectLesson}
-          onCompleteModule={onCompleteModule}
-        />
-      </div>
+        {submitted ? (
+          <div style={{ background: '#eaf7ee', border: '1px solid #b6e2c2', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+            <p style={{ margin: 0, fontWeight: 600, color: '#1f7a3a' }}>
+              ✓ Submission received ({assignmentData.submission.status})
+            </p>
+            {assignmentData.submission.file_url && (
+              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+                File: <a href={assignmentData.submission.file_url} target="_blank" rel="noopener noreferrer">
+                  {assignmentData.submission.file_url.split('/').pop()}
+                </a>
+              </p>
+            )}
+            {assignmentData.submission.feedback && (
+              <p style={{ margin: '6px 0 0', fontSize: 13, color: theme.textMuted }}>
+                Feedback: {assignmentData.submission.feedback}
+              </p>
+            )}
+            {assignmentData.submission.score != null && (
+              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+                Score: <b>{assignmentData.submission.score}</b>
+              </p>
+            )}
+          </div>
+        ) : null}
 
-      <div>
-        <QuizPlayerPanel
-          activeQuiz={activeQuiz}
-          timeLeft={timeLeft}
-          formatTime={formatTime}
-          quizAnswers={quizAnswers}
-          onChangeAnswer={onChangeAnswer}
-          onSubmit={onSubmitQuiz}
-        />
-        <QuizResultPanel quizResult={quizResult} onClose={onCloseQuizResult} />
-        <LessonContentPanel
-          selectedLesson={selectedLesson}
-          modules={modules}
-          onClose={onCloseLesson}
-          onCompleteModule={onCompleteModule}
-        />
-        {!activeQuiz && !quizResult && !assignmentData && !selectedLesson && (
+        {(!submitted || !assignmentData.deadline_passed) && (
           <>
-            <QuizListPanel quizzes={quizzes} onStartQuiz={onStartQuiz} onOpenAssignment={onOpenAssignment} />
-            <GradesPanel grades={grades} onOpenGradeDetail={onOpenGradeDetail} />
+            <input
+              type="file"
+              onChange={e => onChangeAssignmentFile(e.target.files[0])}
+              style={{ marginBottom: 12 }}
+            />
+            {assignmentFile && <p style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>Selected: {assignmentFile.name}</p>}
+            <textarea
+              style={{ ...formInput, width: '100%', minHeight: 100, marginBottom: 12 }}
+              placeholder="Add a note..."
+              value={assignmentNote}
+              onChange={e => onChangeAssignmentNote(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button style={btnPrimary} onClick={onSubmitAssignment} disabled={assignmentUploading}>
+                {assignmentUploading ? 'Submitting...' : (submitted ? 'Resubmit' : 'Submit Assignment')}
+              </button>
+              <button style={btnGhost} onClick={onCloseAssignment}>Close</button>
+            </div>
           </>
         )}
-        <AssignmentPanel
-          assignmentData={assignmentData}
-          assignmentFile={assignmentFile}
-          assignmentNote={assignmentNote}
-          assignmentUploading={assignmentUploading}
-          onChangeFile={onChangeAssignmentFile}
-          onChangeNote={onChangeAssignmentNote}
-          onSubmit={onSubmitAssignment}
-          onClose={onCloseAssignment}
-        />
+        {submitted && assignmentData.deadline_passed && (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button style={btnGhost} onClick={onCloseAssignment}>Close</button>
+          </div>
+        )}
       </div>
+    );
+  }
+  return (
+    <div style={lessonsGrid}>
+      <ModulesPanel
+        selectedCourse={selectedCourse}
+        modules={modules}
+        search={search}
+        selectedLesson={selectedLesson}
+        activeQuiz={activeQuiz}
+        quizResult={quizResult}
+        onSelectLesson={onSelectLesson}
+        onCompleteModule={onCompleteModule}
+      />
+      <QuizListPanel
+        quizzes={quizzes}
+        onStartQuiz={onStartQuiz}
+        onOpenAssignment={onOpenAssignment}
+        onViewGrade={onOpenGradeDetail}
+      />
     </div>
   );
-}
+};
+
+export default StudentLessonsSection;

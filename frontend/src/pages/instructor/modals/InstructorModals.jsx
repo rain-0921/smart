@@ -131,7 +131,7 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
         </div>
         <div>
           <label style={label}>Time Limit (mins)</label>
-          <input className="ins-input" type="number" style={inputStyle}
+          <input className="ins-input" type="number" min="0" style={inputStyle}
             value={quizForm.time_limit_minutes} onChange={e => onChange({ ...quizForm, time_limit_minutes: e.target.value })} />
         </div>
         <div>
@@ -148,13 +148,24 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
             {['online_quiz', 'file_upload', 'mixed'].map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-        <div>
-          <label style={label}>Questions per Attempt</label>
-          <input className="ins-input" type="number" min="1" placeholder="All questions"
-            style={inputStyle}
-            value={quizForm.num_questions_per_attempt}
-            onChange={e => onChange({ ...quizForm, num_questions_per_attempt: e.target.value })} />
-        </div>
+        {quizForm.submission_type === 'online_quiz' && (
+          <div>
+            <label style={label}>Questions per Attempt</label>
+            <input className="ins-input" type="number" min="1" placeholder="All questions"
+              style={inputStyle}
+              value={quizForm.num_questions_per_attempt}
+              onChange={e => onChange({ ...quizForm, num_questions_per_attempt: e.target.value })} />
+          </div>
+        )}
+        {quizForm.submission_type === 'file_upload' && (
+          <div>
+            <label style={label}>File Extension</label>
+            <input className="ins-input" type="text" placeholder="e.g. .pdf, .zip"
+              style={inputStyle}
+              value={quizForm.accepted_file_types || ''}
+              onChange={e => onChange({ ...quizForm, accepted_file_types: e.target.value })} />
+          </div>
+        )}
         <div>
           <label style={label}>Status</label>
           <select className="ins-select" style={inputStyle}
@@ -163,11 +174,13 @@ export function QuizModal({ editingQuiz, quizForm, onChange, onClose, onSubmit }
           </select>
         </div>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, cursor: 'pointer', fontSize: 13, color: token.inkSoft }}>
-        <input type="checkbox" checked={quizForm.randomize_questions}
-          onChange={e => onChange({ ...quizForm, randomize_questions: e.target.checked })} style={{ accentColor: token.brass }} />
-        Randomize Questions
-      </label>
+      {quizForm.submission_type === 'online_quiz' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, cursor: 'pointer', fontSize: 13, color: token.inkSoft }}>
+          <input type="checkbox" checked={quizForm.randomize_questions}
+            onChange={e => onChange({ ...quizForm, randomize_questions: e.target.checked })} style={{ accentColor: token.brass }} />
+          Randomize Questions
+        </label>
+      )}
       <button className="ins-btn" onClick={onSubmit} style={btnPrimary}>
         {editingQuiz ? 'Update' : 'Create'} Quiz
       </button>
@@ -360,9 +373,9 @@ export function StudentDetailModal({ studentDetail, onClose }) {
           </div>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>GPA</div>
+              <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>Avg Score</div>
               <div style={{ fontFamily: fontDisplay, fontSize: 22, color: token.ink, fontWeight: 700 }}>
-                {profile.gpa != null ? Number(profile.gpa).toFixed(2) : '—'}
+                {profile.average_score != null ? `${Number(profile.average_score).toFixed(2)}%` : '—'}
               </div>
             </div>
             <div style={{ textAlign: 'center' }}>

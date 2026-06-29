@@ -10,16 +10,19 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
 
   return (
     <div>
-      {/* GPA & at-risk banner */}
+      {/* Avg score & at-risk banner */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <div style={{ ...statCard, flex: '1 1 180px', borderTop: `2px solid ${progressData.is_at_risk ? theme.accent5 : theme.accent3}` }}>
-          <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Current GPA</div>
-          <div style={{ fontFamily: fontDisplay, fontSize: 36, color: progressData.gpa != null ? theme.text : theme.textDim, lineHeight: 1 }}>
-            {progressData.gpa != null ? Number(progressData.gpa).toFixed(2) : '—'}
+          <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Avg Score</div>
+          <div style={{ fontFamily: fontDisplay, fontSize: 36, color: progressData.average_score != null ? theme.text : theme.textDim, lineHeight: 1 }}>
+            {progressData.average_score != null ? `${Number(progressData.average_score).toFixed(2)}%` : '—'}
           </div>
-          {progressData.is_at_risk && (
-            <div style={{ fontSize: 12, color: theme.accent5, marginTop: 8 }}>⚠ At-risk flag active</div>
-          )}
+      {progressData.is_at_risk && (
+        <div style={{ marginBottom: 20, padding: '12px 16px', borderRadius: 8, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)', fontSize: 13, color: theme.accent5, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <span><strong>At-Risk Alert:</strong> Your academic advisor has been notified of your average quiz score (below 50%). Please reach out for support.</span>
+        </div>
+      )}
         </div>
         <div style={{ ...statCard, flex: '1 1 180px', borderTop: `2px solid ${theme.accent}` }}>
           <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Active Courses</div>
@@ -35,10 +38,10 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
           <div style={sectionTitle}>Recommended Next Steps</div>
           <div style={card}>
             {progressData.recommendations.map((r, i) => (
-              <div key={i} style={{ ...quizItem, cursor: r.next_module_id ? 'pointer' : 'default' }}
-                onClick={() => r.next_module_id && onGotoLessons()}>
-                <div style={{ ...quizIcon, background: r.quiz_id ? 'rgba(167,139,250,0.12)' : 'rgba(52,211,153,0.12)' }}>
-                  {r.quiz_id ? '✎' : '▶'}
+              <div key={i} style={{ ...quizItem, cursor: r.type === 'module' ? 'pointer' : 'default' }}
+                onClick={() => r.type === 'module' && onGotoLessons()}>
+                <div style={{ ...quizIcon, background: r.type === 'quiz' ? 'rgba(167,139,250,0.12)' : 'rgba(52,211,153,0.12)' }}>
+                  {r.type === 'quiz' ? '✎' : '▶'}
                 </div>
                 <div style={quizInfo}>
                   <div style={quizName}>{r.message}</div>
@@ -48,8 +51,8 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
                     </div>
                   )}
                 </div>
-                <span style={{ ...quizStatus, ...statusPill(r.quiz_id ? 'due' : 'open') }}>
-                  {r.quiz_id ? 'Quiz' : 'Continue'}
+                <span style={{ ...quizStatus, ...statusPill(r.type === 'quiz' ? 'due' : 'open') }}>
+                  {r.type === 'quiz' ? 'Quiz' : 'Continue'}
                 </span>
               </div>
             ))}

@@ -56,19 +56,38 @@ export function BuilderModulesPanel({ modules, onAddModule, onEditModule, onAddL
 
 export function BuilderQuizQuestionsPanel({
   questions, feedbackBands, feedbackWarning,
+  submissionType, acceptedFileTypes,
   onAddQuestion, onEditQuestion, onDeleteQuestion,
   onAddBand, onEditBand, onDeleteBand,
 }) {
+  const isFileUpload = submissionType === 'file_upload';
   return (
     <div style={{ marginTop: 10, padding: 12, background: token.paper, borderRadius: 8, border: `1px solid ${token.line}` }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: token.ink }}>Questions ({questions.length})</span>
-        <button className="ins-btn" onClick={onAddQuestion}
-          style={{ background: token.brass, color: '#fff', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-          + Add
-        </button>
+        <span style={{ fontSize: 12, fontWeight: 600, color: token.ink }}>
+          {isFileUpload ? 'Assignment Instructions' : `Questions (${questions.length})`}
+        </span>
+        {!isFileUpload && (
+          <button className="ins-btn" onClick={onAddQuestion}
+            style={{ background: token.brass, color: '#fff', border: 'none', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+            + Add
+          </button>
+        )}
       </div>
-      {questions.map((qs, i) => (
+
+      {isFileUpload ? (
+        <div style={{ fontSize: 13, color: token.inkSoft, lineHeight: 1.6 }}>
+          <p style={{ margin: '0 0 8px' }}>Students will submit a file for this assignment.</p>
+          {acceptedFileTypes && (
+            <p style={{ margin: 0, color: token.inkFaint, fontSize: 12 }}>
+              Accepted file types: <strong>{acceptedFileTypes}</strong>
+            </p>
+          )}
+        </div>
+      ) : questions.length === 0 ? (
+        <p style={{ fontSize: 12, color: token.inkFaint, margin: 0 }}>No questions yet.</p>
+      ) : (
+        questions.map((qs, i) => (
         <div key={qs.question_id} style={{ fontSize: 12, padding: '8px 0', borderBottom: `1px solid ${token.line}`, color: token.inkSoft }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div style={{ flex: 1 }}>
@@ -88,8 +107,9 @@ export function BuilderQuizQuestionsPanel({
             </div>
           )}
         </div>
-      ))}
+      )))}
 
+      {!isFileUpload && (
       <div style={{ marginTop: 14, borderTop: `1px solid ${token.line}`, paddingTop: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: token.ink }}>Score-Band Feedback ({feedbackBands.length})</span>
@@ -120,6 +140,7 @@ export function BuilderQuizQuestionsPanel({
           ))
         }
       </div>
+      )}
     </div>
   );
 }
@@ -128,6 +149,7 @@ export function BuilderQuizzesPanel({
   quizzes, selectedQuizId,
   questions, feedbackBands, feedbackWarning,
   onAddQuiz, onEditQuiz, onDeleteQuiz, onToggleQuiz,
+  onPublishQuiz,
   onAddQuestion, onEditQuestion, onDeleteQuestion,
   onAddBand, onEditBand, onDeleteBand,
 }) {
@@ -155,6 +177,18 @@ export function BuilderQuizzesPanel({
                     style={{ background: selectedQuizId === q.quiz_id ? token.brass : token.surface2, color: selectedQuizId === q.quiz_id ? '#fff' : token.ink, border: `1px solid ${token.line}`, borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
                     {selectedQuizId === q.quiz_id ? '▲' : '▼'}
                   </button>
+                  {q.status === 'draft' && (
+                    <button className="ins-btn" onClick={() => onPublishQuiz(q)}
+                      style={{ background: token.good, color: '#fff', border: 'none', borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                      Publish
+                    </button>
+                  )}
+                  {q.status === 'published' && (
+                    <button className="ins-btn" onClick={() => onEditQuiz(q)}
+                      style={{ background: token.warnSoft, color: token.warn, border: 'none', borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                      Unpublish
+                    </button>
+                  )}
                   <button className="ins-btn" onClick={() => onEditQuiz(q)}
                     style={{ background: token.surface2, color: token.ink, border: `1px solid ${token.line}`, borderRadius: 5, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
                     Edit
@@ -172,6 +206,8 @@ export function BuilderQuizzesPanel({
                 questions={questions}
                 feedbackBands={feedbackBands}
                 feedbackWarning={feedbackWarning}
+                submissionType={q.submission_type}
+                acceptedFileTypes={q.accepted_file_types}
                 onAddQuestion={onAddQuestion}
                 onEditQuestion={onEditQuestion}
                 onDeleteQuestion={onDeleteQuestion}
@@ -306,6 +342,7 @@ export default function InstructorCourseBuilderSection({
   students,
   onAddModule, onEditModule, onAddLesson, onEditLesson, onDeleteModule, onDeleteLesson,
   onAddQuiz, onEditQuiz, onDeleteQuiz, onToggleQuiz,
+  onPublishQuiz,
   onAddQuestion, onEditQuestion, onDeleteQuestion,
   onAddBand, onEditBand, onDeleteBand,
   onOpenStudent, onExportStudentsCsv, onExportStudentsPdf,
@@ -340,6 +377,7 @@ export default function InstructorCourseBuilderSection({
         onEditQuiz={onEditQuiz}
         onDeleteQuiz={onDeleteQuiz}
         onToggleQuiz={onToggleQuiz}
+        onPublishQuiz={onPublishQuiz}
         onAddQuestion={onAddQuestion}
         onEditQuestion={onEditQuestion}
         onDeleteQuestion={onDeleteQuestion}

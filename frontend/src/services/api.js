@@ -42,6 +42,12 @@ export const adminAddEnrollment  = (data)   => API.post('/admin/enrollments', da
 export const adminEditEnrollment = (id, data) => API.put(`/admin/enrollments/${id}`, data);
 export const adminDropEnrollment = (id)     => API.patch(`/admin/enrollments/${id}/drop`);
 
+// Admin - Advisor Assignment
+export const adminGetStudentsWithAdvisor = () => API.get('/admin/students');
+export const adminGetAdvisors            = () => API.get('/admin/advisors');
+export const adminAssignAdvisor          = (studentId, advisorId) =>
+  API.patch(`/admin/students/${studentId}/advisor`, { advisor_id: advisorId });
+
 // Admin - Reports & Logs
 export const adminGetReports     = (params) => API.get('/admin/reports', { params });
 export const adminExportReports  = (params) => API.get('/admin/reports/export', { params, responseType: 'blob' });
@@ -98,6 +104,7 @@ export const instrDeleteLesson      = (lessonId)     => API.delete(`/instructor/
 export const instrGetQuizzes        = (courseId)     => API.get(`/instructor/courses/${courseId}/quizzes`);
 export const instrCreateQuiz        = (courseId, data) => API.post(`/instructor/courses/${courseId}/quizzes`, data);
 export const instrUpdateQuiz        = (quizId, data) => API.put(`/instructor/quizzes/${quizId}`, data);
+export const instrPublishQuiz        = (quizId, quizData) => API.put(`/instructor/quizzes/${quizId}`, { ...quizData, status: 'published' });
 export const instrDeleteQuiz        = (quizId)       => API.delete(`/instructor/quizzes/${quizId}`);
 export const instrGetQuestions      = (quizId)       => API.get(`/instructor/quizzes/${quizId}/questions`);
 export const instrAddQuestion       = (quizId, data) => API.post(`/instructor/quizzes/${quizId}/questions`, data);

@@ -135,6 +135,7 @@ export default function StudentDashboard() {
     setActiveQuiz(null);
     setQuizResult(null);
     setSelectedLesson(null);
+    setAssignmentData(null);
     setModules([]);
     setQuizzes([]);
     setGrades([]);
@@ -157,6 +158,23 @@ export default function StudentDashboard() {
     } catch { showAlert('Failed to load course content', 'error'); }
   };
 
+  // Open a deadline straight from the dashboard — opens the course first,
+  // then immediately starts the quiz or assignment so the student lands in
+  // the right place without having to find it again in the lesson list.
+  const handleOpenDeadline = async (deadline) => {
+    const course = dashboard.enrollments.find(e => e.course_id === deadline.course_id);
+    if (!course) {
+      showAlert('Course not found for this deadline.', 'error');
+      return;
+    }
+    await openCourse(course);
+    if (deadline.submission_type && deadline.submission_type !== 'online_quiz') {
+      await handleOpenAssignment(deadline.quiz_id);
+    } else {
+      await handleStartQuiz(deadline.quiz_id);
+    }
+  };
+
   // Enroll
   const handleEnroll = async (courseId) => {
     try {
@@ -173,7 +191,14 @@ export default function StudentDashboard() {
     try {
       await studentCompleteLesson(moduleId);
       showAlert('Lesson marked as complete!');
-      studentGetModules(selectedCourse.course_id).then(r => setModules(r.data));
+      const [modRes, dashRes, progRes] = await Promise.all([
+        studentGetModules(selectedCourse.course_id),
+        studentGetDashboard(),
+        studentGetProgress(),
+      ]);
+      setModules(modRes.data);
+      setDashboard(dashRes.data);
+      setProgressData(progRes.data);
     } catch { showAlert('Failed', 'error'); }
   };
 
@@ -418,6 +443,8 @@ export default function StudentDashboard() {
           notifications={notifications}
           search={search}
           onOpenCourse={openCourse}
+          onOpenDeadline={handleOpenDeadline}
+          onViewGrade={handleOpenGradeDetail}
           onMarkRead={markRead}
         />
       )}
@@ -527,7 +554,7 @@ export default function StudentDashboard() {
               <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
                 {[
                   { label: 'Email', value: profileData?.email || '—' },
-                  { label: 'GPA', value: profileData?.gpa != null ? Number(profileData.gpa).toFixed(2) : '—' },
+                  { label: 'Avg Score', value: profileData?.average_score != null ? `${Number(profileData.average_score).toFixed(2)}%` : '—' },
                   ...(profileData?.advisor_name ? [{ label: 'Advisor', value: profileData.advisor_name }] : []),
                 ].map(f => (
                   <div key={f.label} style={{ flex: 1, minWidth: 120, background: token.surface2, borderRadius: token.radiusSm, padding: '10px 14px', border: `1px solid ${token.line}` }}>
