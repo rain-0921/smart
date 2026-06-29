@@ -330,7 +330,8 @@ export function QuizListPanel({ quizzes, onStartQuiz, onOpenAssignment, onViewGr
       return q.type === 'assignment' ? 'Attempt' : 'Start';
     }
     if (q.status === 'submitted' || q.status === 'completed' || q.status === 'graded') {
-      // Only show "View Result" when we actually have an attempt to look at
+      // Allow resubmit for file assignments (unless the deadline has passed)
+      if (q.type === 'assignment' && !q.deadline_passed) return 'Resubmit';
       return q.latest_attempt_id ? 'View Result' : null;
     }
     return null; // closed — no button
@@ -521,6 +522,7 @@ const StudentLessonsSection = function StudentLessonsSection({
     );
   }
   if (assignmentData) {
+    const submitted = !!assignmentData.submission;
     return (
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -535,24 +537,59 @@ const StudentLessonsSection = function StudentLessonsSection({
             Due: {new Date(assignmentData.quiz.due_date).toLocaleDateString()}
           </p>
         )}
-        <input
-          type="file"
-          onChange={e => onChangeAssignmentFile(e.target.files[0])}
-          style={{ marginBottom: 12 }}
-        />
-        {assignmentFile && <p style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>Selected: {assignmentFile.name}</p>}
-        <textarea
-          style={{ ...formInput, width: '100%', minHeight: 100, marginBottom: 12 }}
-          placeholder="Add a note..."
-          value={assignmentNote}
-          onChange={e => onChangeAssignmentNote(e.target.value)}
-        />
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button style={btnPrimary} onClick={onSubmitAssignment} disabled={assignmentUploading}>
-            {assignmentUploading ? 'Submitting...' : 'Submit Assignment'}
-          </button>
-          <button style={btnGhost} onClick={onCloseAssignment}>Cancel</button>
-        </div>
+
+        {submitted ? (
+          <div style={{ background: '#eaf7ee', border: '1px solid #b6e2c2', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+            <p style={{ margin: 0, fontWeight: 600, color: '#1f7a3a' }}>
+              ✓ Submission received ({assignmentData.submission.status})
+            </p>
+            {assignmentData.submission.file_url && (
+              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+                File: <a href={assignmentData.submission.file_url} target="_blank" rel="noopener noreferrer">
+                  {assignmentData.submission.file_url.split('/').pop()}
+                </a>
+              </p>
+            )}
+            {assignmentData.submission.feedback && (
+              <p style={{ margin: '6px 0 0', fontSize: 13, color: theme.textMuted }}>
+                Feedback: {assignmentData.submission.feedback}
+              </p>
+            )}
+            {assignmentData.submission.score != null && (
+              <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+                Score: <b>{assignmentData.submission.score}</b>
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {(!submitted || !assignmentData.deadline_passed) && (
+          <>
+            <input
+              type="file"
+              onChange={e => onChangeAssignmentFile(e.target.files[0])}
+              style={{ marginBottom: 12 }}
+            />
+            {assignmentFile && <p style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>Selected: {assignmentFile.name}</p>}
+            <textarea
+              style={{ ...formInput, width: '100%', minHeight: 100, marginBottom: 12 }}
+              placeholder="Add a note..."
+              value={assignmentNote}
+              onChange={e => onChangeAssignmentNote(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button style={btnPrimary} onClick={onSubmitAssignment} disabled={assignmentUploading}>
+                {assignmentUploading ? 'Submitting...' : (submitted ? 'Resubmit' : 'Submit Assignment')}
+              </button>
+              <button style={btnGhost} onClick={onCloseAssignment}>Close</button>
+            </div>
+          </>
+        )}
+        {submitted && assignmentData.deadline_passed && (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button style={btnGhost} onClick={onCloseAssignment}>Close</button>
+          </div>
+        )}
       </div>
     );
   }

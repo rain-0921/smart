@@ -11,8 +11,8 @@ exports.getDashboard = async (req, res) => {
       `SELECT COUNT(*) AS atRiskCount FROM student_profile
        WHERE advisor_id=? AND is_at_risk=1`, [userId]
     );
-    const [[{ avgGpa }]] = await db.execute(
-      `SELECT COALESCE(AVG(gpa),0) AS avgGpa FROM student_profile WHERE advisor_id=?`, [userId]
+    const [[{ avgScore }]] = await db.execute(
+      `SELECT COALESCE(AVG(average_score),0) AS avgScore FROM student_profile WHERE advisor_id=?`, [userId]
     );
     const [recentActivity] = await db.execute(
       `SELECT al.activity_type, al.description, al.created_at, u.username
@@ -23,12 +23,12 @@ exports.getDashboard = async (req, res) => {
        ORDER BY al.created_at DESC LIMIT 8`, [userId]
     );
     const [atRiskStudents] = await db.execute(
-      `SELECT u.user_id, u.username, u.email, sp.gpa, sp.programme
+      `SELECT u.user_id, u.username, u.email, sp.average_score, sp.programme
        FROM student_profile sp
        JOIN user u ON sp.user_id = u.user_id
        WHERE sp.advisor_id=? AND sp.is_at_risk=1`, [userId]
     );
-    res.json({ totalStudents, atRiskCount, avgGpa, recentActivity, atRiskStudents });
+    res.json({ totalStudents, atRiskCount, avgScore, recentActivity, atRiskStudents });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -87,7 +87,7 @@ exports.getMyStudents = async (req, res) => {
   try {
     const [students] = await db.execute(
       `SELECT u.user_id, u.username, u.email, u.phone_number, u.department, u.status,
-              sp.academic_level, sp.programme, sp.gpa, sp.is_at_risk,
+              sp.academic_level, sp.programme, sp.average_score, sp.is_at_risk,
               sp.learning_preferences,
               COUNT(DISTINCT e.course_id) AS enrolled_courses
        FROM student_profile sp
@@ -95,7 +95,7 @@ exports.getMyStudents = async (req, res) => {
        LEFT JOIN enrollment e ON e.user_id = u.user_id AND e.status='active'
        WHERE sp.advisor_id=?
        GROUP BY u.user_id
-       ORDER BY sp.gpa ASC`, [userId]
+       ORDER BY sp.average_score ASC`, [userId]
     );
     res.json(students);
   } catch (error) {
@@ -118,7 +118,7 @@ exports.getStudentDetail = async (req, res) => {
     // Profile
     const [profile] = await db.execute(
       `SELECT u.user_id, u.username, u.email, u.department, u.status, u.created_at,
-              sp.academic_level, sp.programme, sp.gpa, sp.is_at_risk, sp.learning_preferences
+              sp.academic_level, sp.programme, sp.average_score, sp.is_at_risk, sp.learning_preferences
        FROM user u
        JOIN student_profile sp ON u.user_id = sp.user_id
        WHERE u.user_id=?`, [studentId]
@@ -171,7 +171,7 @@ exports.getStudentProgress = async (req, res) => {
   try {
     const [progress] = await db.execute(
       `SELECT u.user_id, u.username, u.email,
-              sp.gpa, sp.is_at_risk, sp.programme,
+              sp.average_score, sp.is_at_risk, sp.programme,
               COUNT(DISTINCT e.course_id) AS total_courses,
               COALESCE(AVG(e.completion_percent),0) AS avg_completion,
               COALESCE(AVG(qa.score),0) AS avg_quiz_score,
@@ -224,7 +224,7 @@ exports.getStudentGrades = async (req, res) => {
     );
 
     const [profile] = await db.execute(
-      `SELECT sp.gpa, sp.academic_level, sp.programme, u.username
+      `SELECT sp.average_score, sp.academic_level, sp.programme, u.username
        FROM student_profile sp JOIN user u ON sp.user_id=u.user_id
        WHERE sp.user_id=?`, [studentId]
     );
@@ -243,7 +243,7 @@ exports.generateReport = async (req, res) => {
     if (type === 'academic') {
       const [report] = await db.execute(
         `SELECT u.username, u.email, sp.programme, sp.academic_level,
-                sp.gpa, sp.is_at_risk,
+                sp.average_score, sp.is_at_risk,
                 COUNT(DISTINCT e.course_id) AS enrolled_courses,
                 SUM(CASE WHEN e.status='completed' THEN 1 ELSE 0 END) AS completed_courses
          FROM student_profile sp
@@ -251,14 +251,14 @@ exports.generateReport = async (req, res) => {
          LEFT JOIN enrollment e ON e.user_id = u.user_id
          WHERE sp.advisor_id=?
          GROUP BY u.user_id
-         ORDER BY sp.gpa DESC`, [advisorId]
+         ORDER BY sp.average_score DESC`, [advisorId]
       );
       return res.json({ type: 'Academic Summary Report', data: report });
     }
 
     // Progress report (default)
     const [report] = await db.execute(
-      `SELECT u.username, u.email, sp.programme, sp.gpa,
+      `SELECT u.username, u.email, sp.programme, sp.average_score,
               COUNT(DISTINCT e.course_id) AS total_courses,
               COALESCE(AVG(e.completion_percent),0) AS avg_completion,
               COALESCE(AVG(qa.score),0) AS avg_quiz_score,
@@ -296,10 +296,10 @@ exports.exportReport = async (req, res) => {
     let headers = [];
 
     if (type === 'academic') {
-      headers = ['username', 'email', 'programme', 'academic_level', 'gpa', 'is_at_risk', 'enrolled_courses', 'completed_courses'];
+      headers = ['username', 'email', 'programme', 'academic_level', 'average_score', 'is_at_risk', 'enrolled_courses', 'completed_courses'];
       [rows] = await db.execute(
         `SELECT u.username, u.email, sp.programme, sp.academic_level,
-                sp.gpa, sp.is_at_risk,
+                sp.average_score, sp.is_at_risk,
                 COUNT(DISTINCT e.course_id) AS enrolled_courses,
                 SUM(CASE WHEN e.status='completed' THEN 1 ELSE 0 END) AS completed_courses
          FROM student_profile sp
@@ -307,12 +307,12 @@ exports.exportReport = async (req, res) => {
          LEFT JOIN enrollment e ON e.user_id = u.user_id
          WHERE sp.advisor_id=?
          GROUP BY u.user_id
-         ORDER BY sp.gpa DESC`, [advisorId]
+         ORDER BY sp.average_score DESC`, [advisorId]
       );
     } else {
-      headers = ['username', 'email', 'programme', 'gpa', 'total_courses', 'avg_completion', 'avg_quiz_score', 'quizzes_taken', 'is_at_risk'];
+      headers = ['username', 'email', 'programme', 'average_score', 'total_courses', 'avg_completion', 'avg_quiz_score', 'quizzes_taken', 'is_at_risk'];
       [rows] = await db.execute(
-        `SELECT u.username, u.email, sp.programme, sp.gpa,
+        `SELECT u.username, u.email, sp.programme, sp.average_score,
                 COUNT(DISTINCT e.course_id) AS total_courses,
                 COALESCE(AVG(e.completion_percent),0) AS avg_completion,
                 COALESCE(AVG(qa.score),0) AS avg_quiz_score,

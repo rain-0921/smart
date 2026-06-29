@@ -1,6 +1,6 @@
 import { token, fontMono } from '../../../theme';
 import { Empty, Modal, Avatar, Icon } from '../../../components/shared';
-import { gpaColor, gpaText, scoreColor, StatusBadge } from '../components/formatters';
+import { avgColor, avgText, scoreColor, StatusBadge } from '../components/formatters';
 import StatCard from '../components/StatCard';
 import RiskPill from '../components/RiskPill';
 import SectionLabel from '../components/SectionLabel';
@@ -22,10 +22,10 @@ export function StudentDetailModal({ detail, onClose }) {
             <KV key={label} label={label} value={value} />
           ))}
           <KV
-            label="GPA"
+            label="Avg Score"
             value={
-              <span style={{ fontFamily: fontMono, color: gpaColor(detail.profile?.gpa) }}>
-                {gpaText(detail.profile?.gpa)}
+              <span style={{ fontFamily: fontMono, color: avgColor(detail.profile?.average_score) }}>
+                {avgText(detail.profile?.average_score)}
               </span>
             }
           />
@@ -126,9 +126,9 @@ export function StudentGradesModal({ grades, onClose }) {
     >
       <div style={{ display: 'flex', gap: 14, marginBottom: 22, flexWrap: 'wrap' }}>
         <StatCard
-          label="GPA"
-          value={gpaText(grades.profile?.gpa)}
-          accent={gpaColor(grades.profile?.gpa)}
+          label="Avg Score"
+          value={avgText(grades.profile?.average_score)}
+          accent={avgColor(grades.profile?.average_score)}
         />
         <StatCard
           label="Programme"

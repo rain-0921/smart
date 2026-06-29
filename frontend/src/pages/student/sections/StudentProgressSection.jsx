@@ -10,17 +10,17 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
 
   return (
     <div>
-      {/* GPA & at-risk banner */}
+      {/* Avg score & at-risk banner */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <div style={{ ...statCard, flex: '1 1 180px', borderTop: `2px solid ${progressData.is_at_risk ? theme.accent5 : theme.accent3}` }}>
-          <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Current GPA</div>
-          <div style={{ fontFamily: fontDisplay, fontSize: 36, color: progressData.gpa != null ? theme.text : theme.textDim, lineHeight: 1 }}>
-            {progressData.gpa != null ? Number(progressData.gpa).toFixed(2) : '—'}
+          <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Avg Score</div>
+          <div style={{ fontFamily: fontDisplay, fontSize: 36, color: progressData.average_score != null ? theme.text : theme.textDim, lineHeight: 1 }}>
+            {progressData.average_score != null ? `${Number(progressData.average_score).toFixed(2)}%` : '—'}
           </div>
       {progressData.is_at_risk && (
         <div style={{ marginBottom: 20, padding: '12px 16px', borderRadius: 8, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)', fontSize: 13, color: theme.accent5, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>⚠️</span>
-          <span><strong>At-Risk Alert:</strong> Your academic advisor has been notified of your GPA (below 2.0). Please reach out for support.</span>
+          <span><strong>At-Risk Alert:</strong> Your academic advisor has been notified of your average quiz score (below 50%). Please reach out for support.</span>
         </div>
       )}
         </div>

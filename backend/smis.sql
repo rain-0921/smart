@@ -205,6 +205,7 @@ CREATE TABLE `quiz` (
   `randomize_questions` tinyint(1) NOT NULL DEFAULT 0,
   `num_questions_per_attempt` int(11) DEFAULT NULL,
   `submission_type` enum('online_quiz','file_upload','mixed') NOT NULL DEFAULT 'online_quiz',
+  `accepted_file_types` varchar(255) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -252,7 +253,7 @@ CREATE TABLE `student_profile` (
   `programme` varchar(100) DEFAULT NULL,
   `learning_preferences` text DEFAULT NULL,
   `advisor_id` int(11) DEFAULT NULL,
-  `gpa` decimal(3,2) DEFAULT 0.00,
+  `average_score` decimal(5,2) DEFAULT 0.00,
   `is_at_risk` tinyint(1) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -561,6 +562,19 @@ ALTER TABLE `quiz_feedback`
 ALTER TABLE `student_profile`
   ADD CONSTRAINT `fk_sp_advisor` FOREIGN KEY (`advisor_id`) REFERENCES `user` (`user_id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_sp_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`user_id`) ON DELETE CASCADE;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- MIGRATION: rename student_profile.gpa → student_profile.average_score
+-- The `gpa` column previously stored a 4-point-scale value derived from quiz
+-- percentages via the formula (avgScore / 100) * 4. That mapping was a logical
+-- mistake: quiz attempts are already recorded on a 0–100 scale, so we now store
+-- the raw percentage directly. Renaming keeps existing rows so historical data
+-- is preserved; existing values are reinterpreted as percentages (×25).
+-- Run manually on existing databases:
+--   ALTER TABLE `student_profile`
+--     CHANGE COLUMN `gpa` `average_score` decimal(5,2) DEFAULT 0.00;
+--   UPDATE `student_profile` SET `average_score` = `average_score` * 25;
+-- ──────────────────────────────────────────────────────────────────────────────
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

@@ -10,8 +10,8 @@ export default function StudentDashboardSection({ user, dashboard, notifications
   const avgCompletion = dashboard.enrollments?.length
     ? Math.round(dashboard.enrollments.reduce((sum, e) => sum + (Number(e.completion_percent) || 0), 0) / dashboard.enrollments.length)
     : null;
-  const gpaValue = dashboard.profile?.gpa;
-  const gpa = gpaValue != null && !Number.isNaN(Number(gpaValue)) ? Number(gpaValue).toFixed(2) : '—';
+  const avgScoreValue = dashboard.profile?.average_score;
+  const avgScore = avgScoreValue != null && !Number.isNaN(Number(avgScoreValue)) ? Number(avgScoreValue).toFixed(2) : '—';
   const atRisk = dashboard.profile?.is_at_risk;
   const deadlinesCount = dashboard.deadlines?.length || 0;
 
@@ -20,6 +20,10 @@ export default function StudentDashboardSection({ user, dashboard, notifications
     const isAssignment = d.submission_type && d.submission_type !== 'online_quiz';
     const hasAttempt = !!d.latest_attempt_id;
     if (hasAttempt && (d.latest_attempt_status === 'submitted' || d.latest_attempt_status === 'graded')) {
+      // Allow resubmit on file assignments until the deadline
+      if (isAssignment && d.latest_attempt_status === 'submitted' && !d.deadline_passed) {
+        return { label: 'Resubmit', tone: 'due', onClick: () => onOpenDeadline(d) };
+      }
       return { label: 'View Result', tone: 'good', onClick: () => onViewGrade(d.latest_attempt_id) };
     }
     if (hasAttempt && d.latest_attempt_status === 'in_progress') {
@@ -49,7 +53,7 @@ export default function StudentDashboardSection({ user, dashboard, notifications
         <StudentStatCard label="Deadlines" value={deadlinesCount}
           icon="✎" tone="orange"
           trend={{ type: deadlinesCount > 0 ? 'down' : 'up', text: deadlinesCount > 0 ? 'Due soon' : 'All clear' }} />
-        <StudentStatCard label="GPA" value={gpa}
+        <StudentStatCard label="Avg Score" value={avgScore}
           icon="🎓" tone={atRisk ? 'orange' : 'purple'}
           trend={{ type: atRisk ? 'down' : 'up', text: atRisk ? '⚠ At-risk student' : 'Keep it up!' }} />
       </div>

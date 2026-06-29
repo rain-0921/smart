@@ -36,7 +36,8 @@ exports.getDashboard = async (req, res) => {
     // and submitted-but-awaiting-grading assignments so the student can still
     // see "View Result" once the instructor finishes grading.
     const [deadlines] = await db.execute(
-      `SELECT q.quiz_id, q.course_id, q.title, q.due_date,
+      `SELECT (q.due_date IS NOT NULL AND q.due_date <= NOW()) AS deadline_passed,
+              q.quiz_id, q.course_id, q.title, q.due_date,
               q.submission_type, q.time_limit_minutes, q.max_attempts,
               att.quiz_attempt_id     AS latest_attempt_id,
               att.status             AS latest_attempt_status,
@@ -71,7 +72,7 @@ exports.getDashboard = async (req, res) => {
     // Student profile
     const [profile] = await db.execute(
       `SELECT u.username, u.email, u.photo_url, u.department,
-              sp.academic_level, sp.programme, sp.gpa, sp.is_at_risk
+              sp.academic_level, sp.programme, sp.average_score, sp.is_at_risk
        FROM user u
        LEFT JOIN student_profile sp ON u.user_id = sp.user_id
        WHERE u.user_id = ?`,
@@ -96,7 +97,7 @@ exports.getProfile = async (req, res) => {
     const [rows] = await db.execute(
       `SELECT u.user_id, u.username, u.email, u.department,
               u.phone_number, u.photo_url,
-              sp.academic_level, sp.programme, sp.learning_preferences, sp.gpa,
+              sp.academic_level, sp.programme, sp.learning_preferences, sp.average_score,
               sp.is_at_risk,
               adv.username AS advisor_name, adv.email AS advisor_email
        FROM user u
@@ -369,7 +370,7 @@ exports.getCourseQuizzes = async (req, res) => {
           ? (hasAttempt ? 'submitted' : 'available')
           : 'available';
       }
-      return { ...q, type: isAssignment ? 'assignment' : 'quiz', status };
+      return { ...q, type: isAssignment ? 'assignment' : 'quiz', status, deadline_passed: !!pastDue };
     });
     res.json(result);
   } catch (error) {
@@ -513,16 +514,16 @@ exports.submitQuiz = async (req, res) => {
       [percentage, attemptId]
     );
 
-    // ── Recalculate GPA from all graded attempts, then notify advisor if below 2.0 ──
+    // ── Recalculate average quiz score from all graded attempts, then notify advisor if below 50% ──
     const [[{ avgScore }]] = await db.execute(
       `SELECT AVG(score) AS avgScore FROM quiz_attempt
        WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
       [userId]
     );
-    const newGpa = avgScore ? parseFloat(((avgScore / 100) * 4).toFixed(2)) : 0;
+    const avgScoreRounded = avgScore !== null ? Math.round(avgScore * 100) / 100 : 0;
     await db.execute(
-      `UPDATE student_profile SET gpa=? WHERE user_id=?`,
-      [newGpa, userId]
+      `UPDATE student_profile SET average_score=? WHERE user_id=?`,
+      [avgScoreRounded, userId]
     );
     const [[profile]] = await db.execute(
       `SELECT sp.advisor_id, u.username AS student_name
@@ -535,14 +536,14 @@ exports.submitQuiz = async (req, res) => {
         `SELECT is_at_risk AS wasAtRisk FROM student_profile WHERE user_id=?`,
         [userId]
       );
-      const nowAtRisk = newGpa < 2.0 ? 1 : 0;
+      const nowAtRisk = avgScoreRounded < 50 ? 1 : 0;
         if (nowAtRisk === 1 && wasAtRisk !== 1) {
         await db.execute(
           `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
            VALUES (?, ?, ?, ?, ?, ?)`,
           [profile.advisor_id,
-           `Low GPA Alert: ${profile.student_name}`,
-           `Your student ${profile.student_name}'s GPA has dropped to ${newGpa.toFixed(2)} (below 2.0). Please review their academic progress.`,
+           `Low Score Alert: ${profile.student_name}`,
+           `Your student ${profile.student_name}'s average quiz score has dropped to ${avgScoreRounded.toFixed(2)} (below 50%). Please review their academic progress.`,
            'alert', 'student', userId]
         );
       }
@@ -584,7 +585,11 @@ exports.submitQuiz = async (req, res) => {
 // Returns the file_upload / mixed assignment plus the student's existing submission (if any)
 exports.getAssignment = async (req, res) => {
   const userId = req.user.user_id;
-  const { quizId } = req.params;
+  const rawId = String(req.params.quizId || '').split(/[:/]/)[0];
+  const quizId = Number(rawId);
+  if (!Number.isInteger(quizId) || quizId < 1) {
+    return res.status(400).json({ message: 'Invalid assignment id' });
+  }
   try {
     const [quizRows] = await db.execute(
       `SELECT q.quiz_id, q.title, q.description, q.due_date, q.submission_type, q.status, q.accepted_file_types
@@ -625,6 +630,7 @@ exports.getAssignment = async (req, res) => {
       deadline_passed: !!isClosed
     });
   } catch (error) {
+    console.error('[getAssignment error]', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -632,7 +638,13 @@ exports.getAssignment = async (req, res) => {
 // Upload (or resubmit) an assignment file. Multipart: field "file" + optional "text_note"
 exports.submitAssignment = async (req, res) => {
   const userId = req.user.user_id;
-  const { quizId } = req.params;
+  // Defensive: strip any garbage (e.g. accidental "id:num" from client) so MySQL INT param binding doesn't choke
+  const rawId = String(req.params.quizId || '').split(/[:/]/)[0];
+  const quizId = Number(rawId);
+  if (!Number.isInteger(quizId) || quizId < 1) {
+    cleanupUpload();
+    return res.status(400).json({ message: 'Invalid assignment id' });
+  }
   const textNote = req.body.text_note || null;
 
   // Helper to delete the just-uploaded file if we must reject the request
@@ -682,7 +694,9 @@ exports.submitAssignment = async (req, res) => {
       `SELECT max_attempts FROM quiz WHERE quiz_id=?`, [quizId]
     );
     const maxAttempts = maxRows[0].max_attempts || 1;
-    if (attemptCount >= maxAttempts) {
+    // File-upload assignments allow unlimited resubmissions (until the deadline);
+    // max_attempts only gates attempts for graded online quizzes.
+    if (quiz.submission_type !== 'file_upload' && attemptCount >= maxAttempts) {
       cleanupUpload();
       return res.status(400).json({ message: `Maximum of ${maxAttempts} attempt(s) reached for this assignment.` });
     }
@@ -823,6 +837,7 @@ exports.submitAssignment = async (req, res) => {
     });
   } catch (error) {
     cleanupUpload();
+    console.error('[submitAssignment error]', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -887,12 +902,12 @@ exports.markNotificationRead = async (req, res) => {
 exports.getProgress = async (req, res) => {
   const userId = req.user.user_id;
   try {
-    // ── 1. GPA & at-risk flag ──────────────────────────────
+    // ── 1. average_score & at-risk flag ────────────────────────
     const [profileRows] = await db.execute(
-      `SELECT gpa, is_at_risk FROM student_profile WHERE user_id = ?`,
+      `SELECT average_score, is_at_risk FROM student_profile WHERE user_id = ?`,
       [userId]
     );
-    const profile = profileRows[0] || { gpa: null, is_at_risk: false };
+    const profile = profileRows[0] || { average_score: null, is_at_risk: false };
 
     // ── 2. Enrolled courses with overall completion % ──────
     const [courses] = await db.execute(
@@ -1014,7 +1029,7 @@ exports.getProgress = async (req, res) => {
     }
 
     res.json({
-      gpa: profile.gpa,
+      average_score: profile.average_score,
       is_at_risk: !!profile.is_at_risk,
       courses,
       recommendations: recommendations.slice(0, 5) // top 5

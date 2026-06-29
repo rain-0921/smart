@@ -1,7 +1,7 @@
 import { token, fontMono } from '../../../theme';
 import { Avatar, Card, Empty, Icon, Spinner } from '../../../components/shared';
 import RiskPill from '../components/RiskPill';
-import { gpaColor, gpaText, StatusBadge } from '../components/formatters';
+import { avgColor, avgText, StatusBadge } from '../components/formatters';
 
 export default function AdvisorStudentsSection({ students, loading, onOpenStudent, onOpenGrades }) {
   if (loading) return <Card><Spinner label="Loading students…" /></Card>;
@@ -18,7 +18,7 @@ export default function AdvisorStudentsSection({ students, loading, onOpenStuden
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
             <thead>
               <tr>
-                {['Student', 'Email', 'Programme', 'Level', 'GPA', 'Courses', 'Status', ''].map(h => (
+                {['Student', 'Email', 'Programme', 'Level', 'Avg Score', 'Courses', 'Status', ''].map(h => (
                   <th key={h} style={{ textAlign: 'left', padding: '9px 12px', background: token.paper, color: token.inkSoft, fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: `1px solid ${token.line}` }}>
                     {h}
                   </th>
@@ -40,7 +40,7 @@ export default function AdvisorStudentsSection({ students, loading, onOpenStuden
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.email}</td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.programme || '—'}</td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.academic_level || '—'}</td>
-                  <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, fontFamily: fontMono, fontWeight: 700, color: gpaColor(s.gpa) }}>{gpaText(s.gpa)}</td>
+                  <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, fontFamily: fontMono, fontWeight: 700, color: avgColor(s.average_score) }}>{avgText(s.average_score)}</td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{s.enrolled_courses}</td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}><StatusBadge status={s.status} /></td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>
@@ -50,7 +50,7 @@ export default function AdvisorStudentsSection({ students, loading, onOpenStuden
                     <button onClick={() => onOpenGrades(s)} style={{ background: token.brass, color: '#1C2541', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer', fontSize: 12, fontWeight: 600, marginRight: 6 }}>
                       Records
                     </button>
-                    {s.gpa < 2 && s.phone_number && (
+                    {s.average_score < 50 && s.phone_number && (
                       <a
                         href={`https://wa.me/${s.phone_number.replace(/\D/g, '')}`}
                         target="_blank"

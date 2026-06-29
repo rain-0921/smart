@@ -1,7 +1,7 @@
 import { token, fontMono } from '../../../theme';
 import { Avatar, Card, Empty, Icon, Spinner } from '../../../components/shared';
 import RiskPill from '../components/RiskPill';
-import { gpaColor, gpaText, pctText, scoreColor } from '../components/formatters';
+import { avgColor, avgText, pctText, scoreColor } from '../components/formatters';
 
 export default function AdvisorProgressSection({ progress, loading }) {
   if (loading) return <Card><Spinner label="Loading progress…" /></Card>;
@@ -18,7 +18,7 @@ export default function AdvisorProgressSection({ progress, loading }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
             <thead>
               <tr>
-                {['Student', 'Programme', 'GPA', 'Avg. completion', 'Avg. quiz score', 'Quizzes taken', 'Standing'].map(h => (
+                {['Student', 'Programme', 'Avg Score', 'Avg. completion', 'Avg. quiz score', 'Quizzes taken', 'Standing'].map(h => (
                   <th key={h} style={{ textAlign: 'left', padding: '9px 12px', background: token.paper, color: token.inkSoft, fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: `1px solid ${token.line}` }}>
                     {h}
                   </th>
@@ -35,7 +35,7 @@ export default function AdvisorProgressSection({ progress, loading }) {
                     </div>
                   </td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.programme || '—'}</td>
-                  <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: gpaColor(s.gpa), fontFamily: fontMono, fontWeight: 700 }}>{gpaText(s.gpa)}</td>
+                  <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: avgColor(s.average_score), fontFamily: fontMono, fontWeight: 700 }}>{avgText(s.average_score)}</td>
                   <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ background: token.line, borderRadius: 99, height: 6, width: 80 }}>

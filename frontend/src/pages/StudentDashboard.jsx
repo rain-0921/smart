@@ -554,7 +554,7 @@ export default function StudentDashboard() {
               <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
                 {[
                   { label: 'Email', value: profileData?.email || '—' },
-                  { label: 'GPA', value: profileData?.gpa != null ? Number(profileData.gpa).toFixed(2) : '—' },
+                  { label: 'Avg Score', value: profileData?.average_score != null ? `${Number(profileData.average_score).toFixed(2)}%` : '—' },
                   ...(profileData?.advisor_name ? [{ label: 'Advisor', value: profileData.advisor_name }] : []),
                 ].map(f => (
                   <div key={f.label} style={{ flex: 1, minWidth: 120, background: token.surface2, borderRadius: token.radiusSm, padding: '10px 14px', border: `1px solid ${token.line}` }}>

@@ -1,6 +1,6 @@
 import { token, fontDisplay, fontMono } from '../../../theme';
 import { Card, Empty, Icon, Spinner } from '../../../components/shared';
-import { gpaColor, gpaText, pctText } from '../components/formatters';
+import { avgColor, avgText, pctText } from '../components/formatters';
 
 export default function AdvisorReportsSection({
   reportType,
@@ -62,7 +62,7 @@ export default function AdvisorReportsSection({
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
                   <thead>
                     <tr>
-                      {['Student', 'Programme', 'GPA', 'Courses', 'Avg. completion', 'Avg. score', 'At risk'].map(h => (
+                      {['Student', 'Programme', 'Avg Score', 'Courses', 'Avg. completion', 'Avg. score', 'At risk'].map(h => (
                         <th key={h} style={{ textAlign: 'left', padding: '9px 12px', background: token.paper, color: token.inkSoft, fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: `1px solid ${token.line}` }}>
                           {h}
                         </th>
@@ -74,7 +74,7 @@ export default function AdvisorReportsSection({
                       <tr key={i} className="sils-table-row">
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.username}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.programme || '—'}</td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: gpaColor(s.gpa), fontFamily: fontMono, fontWeight: 700 }}>{gpaText(s.gpa)}</td>
+                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: avgColor(s.average_score), fontFamily: fontMono, fontWeight: 700 }}>{avgText(s.average_score)}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{s.total_courses}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{pctText(s.avg_completion, 1)}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{pctText(s.avg_quiz_score, 1)}</td>
@@ -87,7 +87,7 @@ export default function AdvisorReportsSection({
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5, minWidth: 560 }}>
                   <thead>
                     <tr>
-                      {['Student', 'Email', 'Programme', 'Level', 'GPA', 'Enrolled', 'Completed', 'At risk'].map(h => (
+                      {['Student', 'Email', 'Programme', 'Level', 'Avg Score', 'Enrolled', 'Completed', 'At risk'].map(h => (
                         <th key={h} style={{ textAlign: 'left', padding: '9px 12px', background: token.paper, color: token.inkSoft, fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: `1px solid ${token.line}` }}>
                           {h}
                         </th>
@@ -101,7 +101,7 @@ export default function AdvisorReportsSection({
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.email}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.programme || '—'}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.academic_level || '—'}</td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: gpaColor(s.gpa), fontFamily: fontMono, fontWeight: 700 }}>{gpaText(s.gpa)}</td>
+                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: avgColor(s.average_score), fontFamily: fontMono, fontWeight: 700 }}>{avgText(s.average_score)}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{s.enrolled_courses}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink, fontFamily: fontMono }}>{s.completed_courses}</td>
                         <td style={{ padding: '10px 12px', borderBottom: `1px solid ${token.line}`, color: token.ink }}>{s.is_at_risk ? 'Yes' : 'No'}</td>

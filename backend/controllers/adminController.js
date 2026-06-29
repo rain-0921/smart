@@ -1,6 +1,41 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 
+// ─── SHARED VALIDATION HELPERS ─────────────────────────
+
+const VALID_ROLES  = ['student', 'instructor', 'advisor', 'admin'];
+const VALID_STATUS = ['active', 'inactive', 'suspended'];
+const ENROLLMENT_STATUS = ['active', 'completed', 'dropped', 'suspended'];
+const COURSE_STATUS = ['draft', 'published', 'archived'];
+
+// Coerce any incoming scheduled_at into a value safe to bind: only accept
+// strings, trim empties to null. Coercing a Date or other type to a string
+// would corrupt the SQL binding — guard against that (BUG-18).
+function normaliseScheduledAt(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return null;
+  const trimmed = v.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// Email must end with @smis.edu for student accounts.
+function isSmisStudentEmail(email) {
+  return typeof email === 'string' && /^[^@\s]+@smis\.edu$/.test(email);
+}
+
+// Department validation: must (a) exist in the distinct list and (b) be
+// non-empty when supplied. Empty/blank is treated as "no department" (null).
+async function isValidDepartment(department) {
+  if (department === null || department === undefined) return true;
+  if (typeof department !== 'string') return false;
+  const trimmed = department.trim();
+  if (trimmed === '') return true;
+  const [rows] = await db.execute(
+    "SELECT DISTINCT department FROM user WHERE department IS NOT NULL AND department != ''"
+  );
+  return rows.map(r => r.department).includes(trimmed);
+}
+
 // ─── DEPARTMENTS ──────────────────────────────────────────
 
 // Returns all distinct non-null department values already in use.
@@ -37,25 +72,31 @@ exports.addUser = async (req, res) => {
   if (!username || !email || !password || !role) {
     return res.status(400).json({ message: 'Please fill in all required fields' });
   }
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ message: `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}` });
+  }
   // Students must use a smis.edu email
-  if (role === 'student' && !/^[^@]+@smis\.edu$/.test(email)) {
+  if (role === 'student' && !isSmisStudentEmail(email)) {
     return res.status(400).json({ message: 'Student email must end with @smis.edu' });
   }
-  // Phone may only contain digits, spaces, hyphens and leading plus
+  // Phone must contain at least one digit (BUG-3 — previous regex matched '+' alone).
   if (phone_number && phone_number.trim() !== '' && !/^\+?[\d\s\-]+$/.test(phone_number)) {
     return res.status(400).json({ message: 'Phone number can only contain digits, spaces, hyphens and leading +' });
   }
-  // Department must be from the allowed list when creating a student
-  if (role === 'student' && department && department.trim() !== '') {
-    try {
-      const [existing] = await db.execute(
-        "SELECT DISTINCT department FROM user WHERE department IS NOT NULL AND department != '' ORDER BY department"
-      );
-      const allowed = existing.map(r => r.department);
-      if (!allowed.includes(department)) {
-        return res.status(400).json({ message: 'Please select a valid department from the list' });
-      }
-    } catch (_) {}
+  if (phone_number && phone_number.trim() !== '' && !/\d/.test(phone_number)) {
+    return res.status(400).json({ message: 'Phone number must contain at least one digit' });
+  }
+  // Department must be from the distinct list for ANY role with a department (BUG-2).
+  if (department && department.trim() !== '') {
+    let ok;
+    try { ok = await isValidDepartment(department); }
+    catch (e) {
+      console.error('[addUser] dept lookup failed', e.message);
+      return res.status(500).json({ message: 'Unable to verify department' });
+    }
+    if (!ok) {
+      return res.status(400).json({ message: 'Please select a valid department from the list' });
+    }
   }
   try {
     const password_hash = await bcrypt.hash(password, 10);
@@ -88,18 +129,69 @@ exports.addUser = async (req, res) => {
 exports.editUser = async (req, res) => {
   const { id } = req.params;
   const { username, email, role, department, phone_number, status } = req.body;
+  const targetId = Number(id);
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return res.status(400).json({ message: 'Invalid user id' });
+  }
   if (!username || !email || !role || !status) {
     return res.status(400).json({ message: 'Please fill in all required fields' });
+  }
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ message: `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}` });
+  }
+  if (!VALID_STATUS.includes(status)) {
+    return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID_STATUS.join(', ')}` });
+  }
+  // BUG-6: students must keep a smis.edu email even on edit.
+  if (role === 'student' && !isSmisStudentEmail(email)) {
+    return res.status(400).json({ message: 'Student email must end with @smis.edu' });
   }
   if (phone_number && phone_number.trim() !== '' && !/^\+?[\d\s\-]+$/.test(phone_number)) {
     return res.status(400).json({ message: 'Phone number can only contain digits, spaces, hyphens and leading +' });
   }
+  if (phone_number && phone_number.trim() !== '' && !/\d/.test(phone_number)) {
+    return res.status(400).json({ message: 'Phone number must contain at least one digit' });
+  }
+
   try {
-    await db.execute(
-      `UPDATE user SET username=?, email=?, role=?, department=?, 
-       phone_number=?, status=? WHERE user_id=?`,
-      [username, email, role, department || null, phone_number || null, status, id]
+    // BUG-4: load current row + prevent self-edit demotion/suspension (AUTH-1).
+    const [[target]] = await db.execute(
+      'SELECT user_id, role, status FROM user WHERE user_id=?', [targetId]
     );
+    if (!target) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (req.user && Number(req.user.user_id) === targetId) {
+      return res.status(400).json({ message: 'You cannot edit your own account here' });
+    }
+    if (target.role === 'admin' && status !== 'active') {
+      // Make sure we don't lock out the system.
+      const [activeAdmins] = await db.execute(
+        "SELECT user_id FROM user WHERE role='admin' AND status='active'"
+      );
+      const others = activeAdmins.filter(r => Number(r.user_id) !== targetId);
+      if (others.length === 0) {
+        return res.status(400).json({ message: 'Cannot deactivate or suspend the only active admin' });
+      }
+    }
+    if (target.role === 'admin' && role !== 'admin') {
+      const [activeAdmins] = await db.execute(
+        "SELECT user_id FROM user WHERE role='admin' AND status='active'"
+      );
+      const others = activeAdmins.filter(r => Number(r.user_id) !== targetId);
+      if (others.length === 0) {
+        return res.status(400).json({ message: 'Cannot demote the only active admin' });
+      }
+    }
+
+    const [result] = await db.execute(
+      `UPDATE user SET username=?, email=?, role=?, department=?,
+       phone_number=?, status=? WHERE user_id=?`,
+      [username, email, role, department || null, phone_number || null, status, targetId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     res.json({ message: 'User updated successfully' });
   } catch (error) {
     console.error('[editUser]', error.code, error.message);
@@ -109,13 +201,38 @@ exports.editUser = async (req, res) => {
   }
 };
 
-// Deactivate user
+// Deactivate user — same last-admin guard
 exports.deactivateUser = async (req, res) => {
   const { id } = req.params;
+  const targetId = Number(id);
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return res.status(400).json({ message: 'Invalid user id' });
+  }
   try {
-    await db.execute(
-      "UPDATE user SET status='inactive' WHERE user_id=?", [id]
+    const [[target]] = await db.execute(
+      'SELECT role FROM user WHERE user_id=?', [targetId]
     );
+    if (!target) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (req.user && Number(req.user.user_id) === targetId) {
+      return res.status(400).json({ message: 'You cannot deactivate your own account' });
+    }
+    if (target.role === 'admin') {
+      const [activeAdmins] = await db.execute(
+        "SELECT user_id FROM user WHERE role='admin' AND status='active'"
+      );
+      const others = activeAdmins.filter(r => Number(r.user_id) !== targetId);
+      if (others.length === 0) {
+        return res.status(400).json({ message: 'Cannot deactivate the only active admin' });
+      }
+    }
+    const [result] = await db.execute(
+      "UPDATE user SET status='inactive' WHERE user_id=?", [targetId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     res.json({ message: 'User deactivated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -144,11 +261,22 @@ exports.addCourse = async (req, res) => {
   if (!title || !instructor_id) {
     return res.status(400).json({ message: 'Title and instructor are required' });
   }
+  const instructorId = Number(instructor_id);
+  if (!Number.isInteger(instructorId) || instructorId <= 0) {
+    return res.status(400).json({ message: 'instructor_id must be a positive integer' });
+  }
+  // BUG-8: instructor must exist with role=instructor AND status=active.
   try {
+    const [rows] = await db.execute(
+      "SELECT user_id FROM user WHERE user_id=? AND role='instructor' AND status='active'", [instructorId]
+    );
+    if (rows.length === 0) {
+      return res.status(400).json({ message: 'Selected instructor is not an active user' });
+    }
     await db.execute(
       `INSERT INTO course (title, description, instructor_id, status)
        VALUES (?, ?, ?, 'draft')`,
-      [title, description || null, instructor_id]
+      [title, description || null, instructorId]
     );
     res.status(201).json({ message: 'Course created successfully' });
   } catch (error) {
@@ -162,12 +290,29 @@ exports.editCourse = async (req, res) => {
   if (!title || !status || !instructor_id) {
     return res.status(400).json({ message: 'Please fill in all required fields' });
   }
+  const courseId = Number(id);
+  const instructorId = Number(instructor_id);
+  if (!Number.isInteger(courseId) || courseId <= 0 || !Number.isInteger(instructorId) || instructorId <= 0) {
+    return res.status(400).json({ message: 'Invalid id' });
+  }
+  if (!COURSE_STATUS.includes(status)) {
+    return res.status(400).json({ message: `Invalid status. Must be one of: ${COURSE_STATUS.join(', ')}` });
+  }
   try {
-    await db.execute(
+    const [instructors] = await db.execute(
+      "SELECT user_id FROM user WHERE user_id=? AND role='instructor' AND status='active'", [instructorId]
+    );
+    if (instructors.length === 0) {
+      return res.status(400).json({ message: 'Selected instructor is not an active user' });
+    }
+    const [result] = await db.execute(
       `UPDATE course SET title=?, description=?, status=?, instructor_id=?
        WHERE course_id=?`,
-      [title, description || null, status, instructor_id, id]
+      [title, description || null, status, instructorId, courseId]
     );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Course not found' });
+    }
     res.json({ message: 'Course updated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -176,10 +321,17 @@ exports.editCourse = async (req, res) => {
 
 exports.archiveCourse = async (req, res) => {
   const { id } = req.params;
+  const courseId = Number(id);
+  if (!Number.isInteger(courseId) || courseId <= 0) {
+    return res.status(400).json({ message: 'Invalid course id' });
+  }
   try {
-    await db.execute(
-      "UPDATE course SET status='archived' WHERE course_id=?", [id]
+    const [result] = await db.execute(
+      "UPDATE course SET status='archived' WHERE course_id=?", [courseId]
     );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Course not found' });
+    }
     res.json({ message: 'Course archived successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -207,39 +359,77 @@ exports.getAllEnrollments = async (req, res) => {
 
 exports.addEnrollment = async (req, res) => {
   const { user_id, course_id } = req.body;
-  if (!user_id || !course_id) {
-    return res.status(400).json({ message: 'Student and course are required' });
+  const userId = Number(user_id);
+  const courseId = Number(course_id);
+  if (!Number.isInteger(userId) || userId <= 0 || !Number.isInteger(courseId) || courseId <= 0) {
+    return res.status(400).json({ message: 'user_id and course_id must be positive integers' });
   }
+
+  const conn = await db.getConnection();
   try {
-    const [existing] = await db.execute(
-      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status IN ('active','completed')",
-      [user_id, course_id]
+    await conn.beginTransaction();
+
+    // BUG-10: validate student + course statuses.
+    const [students] = await conn.execute(
+      "SELECT user_id FROM user WHERE user_id=? AND role='student' AND status='active'", [userId]
+    );
+    if (students.length === 0) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Selected user is not an active student' });
+    }
+    const [courses] = await conn.execute(
+      "SELECT course_id, status FROM course WHERE course_id=? AND status IN ('draft','published')", [courseId]
+    );
+    if (courses.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Course not found or not open for enrollment' });
+    }
+
+    // BUG-14: lock the (user_id, course_id) row to prevent duplicate-enroll race.
+    const [existing] = await conn.execute(
+      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? FOR UPDATE", [userId, courseId]
     );
     if (existing.length > 0) {
+      await conn.rollback();
       return res.status(400).json({ message: 'Student is already enrolled in this course' });
     }
-    await db.execute(
+    await conn.execute(
       "INSERT INTO enrollment (user_id, course_id, status) VALUES (?, ?, 'active')",
-      [user_id, course_id]
+      [userId, courseId]
     );
+    await conn.commit();
     res.status(201).json({ message: 'Enrollment added successfully' });
   } catch (error) {
+    try { await conn.rollback(); } catch (_) {}
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ message: 'Student is already enrolled in this course' });
+    }
     res.status(500).json({ message: 'Server error', error: error.message });
+  } finally {
+    conn.release();
   }
 };
 
-// Edit enrollment — only status is mutable from the admin UI (course cannot be changed).
+// Edit enrollment — status is enum-validated (BUG-11). When setting
+// 'completed', also auto-fill completed_at and completion_percent (BUG-13).
 exports.editEnrollment = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  if (!status) {
-    return res.status(400).json({ message: 'Status is required' });
+  const enrollmentId = Number(id);
+  if (!Number.isInteger(enrollmentId) || enrollmentId <= 0) {
+    return res.status(400).json({ message: 'Invalid enrollment id' });
+  }
+  if (!status || !ENROLLMENT_STATUS.includes(status)) {
+    return res.status(400).json({ message: `Invalid status. Must be one of: ${ENROLLMENT_STATUS.join(', ')}` });
   }
   try {
-    await db.execute(
-      'UPDATE enrollment SET status=? WHERE enrollment_id=?',
-      [status, id]
-    );
+    const sql = status === 'completed'
+      ? 'UPDATE enrollment SET status=?, completed_at=NOW(), completion_percent=100 WHERE enrollment_id=?'
+      : 'UPDATE enrollment SET status=? WHERE enrollment_id=?';
+    const [result] = await db.execute(sql, [status, enrollmentId]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Enrollment not found' });
+    }
     res.json({ message: 'Enrollment updated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -248,10 +438,17 @@ exports.editEnrollment = async (req, res) => {
 
 exports.dropEnrollment = async (req, res) => {
   const { id } = req.params;
+  const enrollmentId = Number(id);
+  if (!Number.isInteger(enrollmentId) || enrollmentId <= 0) {
+    return res.status(400).json({ message: 'Invalid enrollment id' });
+  }
   try {
-    await db.execute(
-      "UPDATE enrollment SET status='dropped' WHERE enrollment_id=?", [id]
+    const [result] = await db.execute(
+      "UPDATE enrollment SET status='dropped' WHERE enrollment_id=?", [enrollmentId]
     );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Enrollment not found' });
+    }
     res.json({ message: 'Enrollment dropped successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -301,18 +498,25 @@ exports.createNotification = async (req, res) => {
   if (!title || !message) {
     return res.status(400).json({ message: 'Title and message are required' });
   }
-  // At least one target must be specified
-  if (!user_id && !target_role && !course_id && !target_all) {
+  // BUG-16: more than one targeting mode → reject with 400 (instead of
+  // silently letting precedence decide).
+  const targetModes = [user_id, target_role, course_id, target_all].filter(v => v !== undefined && v !== null && v !== '');
+  if (targetModes.length === 0) {
     return res.status(400).json({
       message: 'A target is required: user_id, target_role, course_id, or target_all'
+    });
+  }
+  if (targetModes.length > 1) {
+    return res.status(400).json({
+      message: 'Specify exactly one target mode: user_id, target_role, course_id, or target_all'
     });
   }
   // Normalise notification type — default to admin_broadcast if not provided or invalid
   const VALID_TYPES = ['announcement', 'deadline', 'quiz_score', 'admin_broadcast'];
   const notifType = type && VALID_TYPES.includes(type) ? type : 'admin_broadcast';
 
-  // Treat empty/null scheduled_at as "send now" (NULL in DB means immediate)
-  const scheduledAt = scheduled_at && scheduled_at.trim() !== '' ? scheduled_at : null;
+  // BUG-18: never call .trim() on a non-string (e.g. Date object).
+  const scheduledAt = normaliseScheduledAt(scheduled_at);
 
   // Helper: bulk-insert one notification row per recipient
   const fanOut = async (recipients, type, targetRole = null) => {
@@ -329,20 +533,29 @@ exports.createNotification = async (req, res) => {
   try {
     if (user_id) {
       // ── Mode 1: single recipient ───────────────────────────────────────────
-      // IMPORTANT: do NOT set target_role here. If target_role were set (e.g. to
-      // 'student' for a single student's notification), the row would also match
-      // every other student in getNotifications queries that use
-      // "WHERE user_id=? OR target_role='student'", causing notifications to
-      // appear for ALL students instead of just the intended recipient.
+      // BUG-15: validate recipient existence + active status.
+      const userId = Number(user_id);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: 'user_id must be a positive integer' });
+      }
+      const [recipients] = await db.execute(
+        "SELECT user_id FROM user WHERE user_id=? AND status='active'", [userId]
+      );
+      if (recipients.length === 0) {
+        return res.status(400).json({ message: 'Recipient user not found or inactive' });
+      }
       await db.execute(
         `INSERT INTO notification (user_id, title, message, type, target_role, scheduled_at)
          VALUES (?, ?, ?, ?, NULL, ?)`,
-        [user_id, title, message, notifType, scheduledAt]
+        [userId, title, message, notifType, scheduledAt]
       );
       res.status(201).json({ message: 'Notification created successfully', recipients: 1 });
 
     } else if (target_role) {
       // ── Mode 2: role broadcast ─────────────────────────────────────────────
+      if (!VALID_ROLES.includes(target_role)) {
+        return res.status(400).json({ message: `Invalid target_role. Must be one of: ${VALID_ROLES.join(', ')}` });
+      }
       const [recipients] = await db.execute(
         `SELECT user_id FROM user WHERE role=? AND status='active'`, [target_role]
       );
@@ -365,8 +578,12 @@ exports.createNotification = async (req, res) => {
 
     } else if (course_id) {
       // ── Mode 4: course broadcast (all active students enrolled in a course) ─
+      const courseId = Number(course_id);
+      if (!Number.isInteger(courseId) || courseId <= 0) {
+        return res.status(400).json({ message: 'course_id must be a positive integer' });
+      }
       const [[course]] = await db.execute(
-        `SELECT title FROM course WHERE course_id=?`, [course_id]
+        `SELECT title FROM course WHERE course_id=?`, [courseId]
       );
       if (!course) {
         return res.status(404).json({ message: 'Course not found' });
@@ -375,7 +592,7 @@ exports.createNotification = async (req, res) => {
         `SELECT DISTINCT e.user_id FROM enrollment e
          JOIN user u ON e.user_id = u.user_id
          WHERE e.course_id=? AND e.status='active' AND u.status='active'`,
-        [course_id]
+        [courseId]
       );
       if (recipients.length === 0) {
         return res.status(400).json({
@@ -389,16 +606,17 @@ exports.createNotification = async (req, res) => {
       });
     }
   } catch (error) {
+    if (error.code === 'ER_NO_REFERENCED' || error.code === 'ER_NO_REFERENCED_ROW') {
+      return res.status(400).json({ message: 'Invalid recipient reference' });
+    }
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
 // Edit notification — only allowed if not yet sent
-// "Not yet sent" = scheduled_at is in the future OR scheduled_at is NULL (draft/send-now pending)
-// NOTE: editing only applies to single-recipient notifications. Role-broadcast notifications
-// are fanned out into many rows at creation time (one per user) and are not editable as a
-// group here — delete and recreate the broadcast instead.
-// Only draft notifications (scheduled_at IS NULL) are editable.
+// "Not yet sent" = scheduled_at IS NULL OR scheduled_at > NOW()
+// i.e. drafts (send-now pending) and future-scheduled ones. Sent notifications
+// cannot be edited.
 exports.editNotification = async (req, res) => {
   const { id } = req.params;
   const { title, message, scheduled_at } = req.body;
@@ -407,27 +625,38 @@ exports.editNotification = async (req, res) => {
     return res.status(400).json({ message: 'Title and message are required' });
   }
 
+  const notifId = Number(id);
+  if (!Number.isInteger(notifId) || notifId <= 0) {
+    return res.status(400).json({ message: 'Invalid notification id' });
+  }
+
   try {
     const [[existing]] = await db.execute(
       `SELECT notification_id, scheduled_at FROM notification WHERE notification_id=?`,
-      [id]
+      [notifId]
     );
     if (!existing) {
       return res.status(404).json({ message: 'Notification not found' });
     }
-    // Only draft notifications (not yet queued) can be edited
-    if (existing.scheduled_at !== null) {
+    // Edit only drafts (IS NULL) AND future-scheduled. Already-sent rows immutable.
+    const scheduled = existing.scheduled_at;
+    const isDraft = scheduled === null;
+    const isFuture = scheduled !== null && new Date(scheduled) > new Date();
+    if (!isDraft && !isFuture) {
       return res.status(400).json({
-        message: 'Only draft notifications can be edited. Delete this notification and create a new one.'
+        message: 'Only draft or future-scheduled notifications can be edited. Delete this notification and create a new one.'
       });
     }
 
-    const scheduledAtNew = scheduled_at && scheduled_at.trim() !== '' ? scheduled_at : null;
+    const scheduledAtNew = normaliseScheduledAt(scheduled_at);
 
-    await db.execute(
+    const [result] = await db.execute(
       `UPDATE notification SET title=?, message=?, scheduled_at=? WHERE notification_id=?`,
-      [title, message, scheduledAtNew, id]
+      [title, message, scheduledAtNew, notifId]
     );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
     res.json({ message: 'Notification updated successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -437,10 +666,17 @@ exports.editNotification = async (req, res) => {
 // Delete notification by id
 exports.deleteNotification = async (req, res) => {
   const { id } = req.params;
+  const notifId = Number(id);
+  if (!Number.isInteger(notifId) || notifId <= 0) {
+    return res.status(400).json({ message: 'Invalid notification id' });
+  }
   try {
-    await db.execute(
-      `DELETE FROM notification WHERE notification_id=?`, [id]
+    const [result] = await db.execute(
+      `DELETE FROM notification WHERE notification_id=?`, [notifId]
     );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
     res.json({ message: 'Notification deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -448,17 +684,26 @@ exports.deleteNotification = async (req, res) => {
 };
 
 // ─── SHARED HELPERS (reports + logs) ─────────────────────
+// (normaliseScheduledAt and isValidDepartment live at the top of the file.)
 
 // Validate a YYYY-MM-DD string and build a date-range WHERE fragment on `column`.
 // Returns { clause, params }; clause is '' when no valid dates are supplied.
+// BUG-22: rejects inverted ranges (start > end) at the source.
+// BUG-23: capping to "today" is delegated to SQL via NOW() — JS date is
+// timezone-naive and can be off by a day.
 function buildDateRange(column, startDate, endDate) {
   const clauses = [];
   const params = [];
   const isValid = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
-  if (isValid(startDate)) { clauses.push(`${column} >= ?`); params.push(`${startDate} 00:00:00`); }
-  const today = new Date().toISOString().slice(0, 10);
-  const cappedEnd = isValid(endDate) && endDate > today ? today : endDate;
-  if (isValid(cappedEnd)) { clauses.push(`${column} <= ?`); params.push(`${cappedEnd} 23:59:59`); }
+  const s = isValid(startDate) ? startDate : null;
+  const e = isValid(endDate)   ? endDate   : null;
+  if (s && e && s > e) {
+    const err = new Error('Invalid date range: startDate is after endDate');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (s) { clauses.push(`${column} >= ?`); params.push(`${s} 00:00:00`); }
+  if (e) { clauses.push(`${column} <= ?`); params.push(`${e} 23:59:59`); }
   return { clause: clauses.join(' AND '), params };
 }
 
@@ -489,10 +734,17 @@ exports.getReports = async (req, res) => {
 
   try {
     let payload;
-    if (type === 'summary')                  payload = await buildSummaryReport(startDate, endDate);
-    else if (type === 'student_enrollment')  payload = await buildEnrollmentReport(startDate, endDate);
-    else if (type === 'course_performance')  payload = await buildCoursePerformanceReport(startDate, endDate);
-    else if (type === 'user_registration')   payload = await buildUserRegistrationReport(startDate, endDate);
+    try {
+      if (type === 'summary')                  payload = await buildSummaryReport(startDate, endDate);
+      else if (type === 'student_enrollment')  payload = await buildEnrollmentReport(startDate, endDate);
+      else if (type === 'course_performance')  payload = await buildCoursePerformanceReport(startDate, endDate);
+      else if (type === 'user_registration')   payload = await buildUserRegistrationReport(startDate, endDate);
+    } catch (e) {
+      if (e && e.statusCode === 400) {
+        return res.status(400).json({ message: e.message });
+      }
+      throw e;
+    }
 
     const meta = {
       reportType: type,
@@ -531,8 +783,14 @@ async function buildSummaryReport(startDate, endDate) {
      GROUP BY c.course_id ORDER BY enrollments DESC LIMIT 5`
   );
 
-  const isEmpty = totalUsers === 0 && totalCourses === 0 && totalEnrollments === 0;
-  return { isEmpty, summary: { totalUsers, totalCourses, totalEnrollments, activeStudents }, data: courseStats };
+  // BUG-24: also treat top-courses emptiness as "empty summary".
+  const hasCourses = courseStats.some(c => Number(c.enrollments) > 0);
+  const isEmpty = (Number(totalUsers) === 0 && Number(totalEnrollments) === 0) || !hasCourses;
+  return {
+    isEmpty,
+    summary: { totalUsers, totalCourses, totalEnrollments, activeStudents },
+    data: courseStats,
+  };
 }
 
 // Student enrollment report — one row per enrollment in the period, plus
@@ -606,7 +864,8 @@ exports.exportReports = async (req, res) => {
     let rows = [];
     let headers = [];
 
-    if (type === 'student_enrollment') {
+    try {
+      if (type === 'student_enrollment') {
       headers = ['enrollment_id', 'student_name', 'student_email', 'course_title', 'status', 'completion_percent', 'enrolled_at'];
       const { clause, params: p } = buildDateRange('e.enrolled_at', startDate, endDate);
       const where = clause ? `WHERE ${clause}` : '';
@@ -655,6 +914,12 @@ exports.exportReports = async (req, res) => {
          GROUP BY c.course_id ORDER BY enrollments DESC`
       );
       rows = courseStats;
+    }
+    } catch (e) {
+      if (e && e.statusCode === 400) {
+        return res.status(400).json({ message: e.message });
+      }
+      throw e;
     }
 
     if (rows.length === 0) {
@@ -727,6 +992,8 @@ exports.getActivityFilters = async (req, res) => {
 };
 
 // Initial screen: "a list of all users with their most recent tracked activities".
+// LEFT JOIN so users with zero activity still appear (BUG-29); tie-break on user_id
+// for deterministic ordering across pages.
 exports.getActivityUsers = async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -735,15 +1002,15 @@ exports.getActivityUsers = async (req, res) => {
               a.description   AS last_description,
               a.created_at    AS last_activity_at
        FROM user u
-       JOIN activity_log a ON a.activity_log_id = (
+       LEFT JOIN activity_log a ON a.activity_log_id = (
          SELECT a2.activity_log_id FROM activity_log a2
          WHERE a2.user_id = u.user_id
          ORDER BY a2.created_at DESC LIMIT 1
        )
-       ORDER BY a.created_at DESC`
+       ORDER BY a.created_at IS NULL, a.created_at DESC, u.user_id ASC`
     );
     if (rows.length === 0) {
-      return res.json({ isEmpty: true, message: 'No records found', data: [] });
+      return res.json({ isEmpty: true, message: 'No users found', data: [] });
     }
     res.json({ isEmpty: false, count: rows.length, data: rows });
   } catch (error) {
@@ -846,7 +1113,7 @@ exports.getAllAdvisors = async (req, res) => {
     const [advisors] = await db.execute(
       `SELECT user_id, username, email, department, status
        FROM user
-       WHERE role = 'advisor'
+       WHERE role = 'advisor' AND status = 'active'
        ORDER BY username ASC`
     );
     res.json(advisors);
@@ -860,25 +1127,38 @@ exports.assignAdvisor = async (req, res) => {
   const { studentId } = req.params;
   const { advisor_id } = req.body;
 
-  if (advisor_id !== null && advisor_id !== '') {
-    const [[student], [advisor]] = await Promise.all([
-      db.execute('SELECT user_id FROM user WHERE user_id=? AND role=\'student\'', [studentId]),
-      db.execute('SELECT user_id FROM user WHERE user_id=? AND role=\'advisor\'', [advisor_id]),
-    ]);
-    if (!student) {
-      return res.status(404).json({ message: 'Student not found' });
-    }
-    if (!advisor) {
-      return res.status(400).json({ message: 'Selected user is not an advisor' });
-    }
+  // Normalise "clear/unset" to null.
+  const newAdvisorId = (advisor_id === null || advisor_id === undefined || advisor_id === '') ? null : Number(advisor_id);
+
+  if (advisor_id !== null && advisor_id !== undefined && advisor_id !== '' && !Number.isInteger(newAdvisorId)) {
+    return res.status(400).json({ message: 'advisor_id must be an integer or null' });
   }
 
   try {
-    await db.execute(
-      'UPDATE student_profile SET advisor_id = ? WHERE user_id = ?',
-      [advisor_id || null, studentId]
+    const [students] = await db.execute(
+      "SELECT user_id FROM user WHERE user_id=? AND role='student'", [studentId]
     );
-    const msg = advisor_id ? 'Advisor assigned successfully' : 'Advisor unassigned';
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    if (newAdvisorId !== null) {
+      const [advisors] = await db.execute(
+        "SELECT user_id FROM user WHERE user_id=? AND role='advisor' AND status='active'", [newAdvisorId]
+      );
+      if (advisors.length === 0) {
+        return res.status(400).json({ message: 'Selected user is not an active advisor' });
+      }
+    }
+
+    const [result] = await db.execute(
+      'UPDATE student_profile SET advisor_id = ? WHERE user_id = ?',
+      [newAdvisorId, studentId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Student profile not found' });
+    }
+    const msg = newAdvisorId ? 'Advisor assigned successfully' : 'Advisor unassigned';
     res.json({ message: msg });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -889,30 +1169,42 @@ exports.assignAdvisor = async (req, res) => {
 
 // Single endpoint that bundles everything the Admin Dashboard page shows:
 // headline counts, user breakdown by role, top courses, and recent activity.
-
+// BUG-40: fan out via Promise.all instead of serialising 9 round-trips.
 exports.getDashboard = async (req, res) => {
   try {
-    const [[{ totalUsers }]]       = await db.execute('SELECT COUNT(*) AS totalUsers FROM user');
-    const [[{ totalCourses }]]     = await db.execute('SELECT COUNT(*) AS totalCourses FROM course');
-    const [[{ totalEnrollments }]] = await db.execute('SELECT COUNT(*) AS totalEnrollments FROM enrollment');
-    const [[{ activeStudents }]]   = await db.execute(
-      "SELECT COUNT(*) AS activeStudents FROM user WHERE role='student' AND status='active'"
-    );
-    const [usersByRole] = await db.execute(
-      `SELECT role, COUNT(*) AS count FROM user GROUP BY role`
-    );
-    const [topCourses] = await db.execute(
-      `SELECT c.title, COUNT(e.enrollment_id) AS enrollments
-       FROM course c LEFT JOIN enrollment e ON c.course_id = e.course_id
-       GROUP BY c.course_id ORDER BY enrollments DESC LIMIT 5`
-    );
-    const [recentActivity] = await db.execute(
-      `SELECT a.activity_type, a.description, a.created_at, u.username, u.role
-       FROM activity_log a JOIN user u ON a.user_id = u.user_id
-       ORDER BY a.created_at DESC LIMIT 10`
-    );
+    const [
+      [userTotal],
+      [courseTotal],
+      [enrollmentTotal],
+      [activeStudents],
+      [usersByRole],
+      [topCourses],
+      [recentActivity],
+    ] = await Promise.all([
+      db.execute('SELECT COUNT(*) AS totalUsers FROM user'),
+      db.execute('SELECT COUNT(*) AS totalCourses FROM course'),
+      db.execute('SELECT COUNT(*) AS totalEnrollments FROM enrollment'),
+      db.execute("SELECT COUNT(*) AS activeStudents FROM user WHERE role='student' AND status='active'"),
+      db.execute('SELECT role, COUNT(*) AS count FROM user GROUP BY role'),
+      db.execute(
+        `SELECT c.title, COUNT(e.enrollment_id) AS enrollments
+         FROM course c LEFT JOIN enrollment e ON c.course_id = e.course_id
+         GROUP BY c.course_id ORDER BY enrollments DESC LIMIT 5`
+      ),
+      db.execute(
+        `SELECT a.activity_type, a.description, a.created_at, u.username, u.role
+         FROM activity_log a JOIN user u ON a.user_id = u.user_id
+         ORDER BY a.created_at DESC LIMIT 10`
+      ),
+    ]);
+
     res.json({
-      stats: { totalUsers, totalCourses, totalEnrollments, activeStudents },
+      stats: {
+        totalUsers:       userTotal[0].totalUsers,
+        totalCourses:     courseTotal[0].totalCourses,
+        totalEnrollments: enrollmentTotal[0].totalEnrollments,
+        activeStudents:   activeStudents[0].activeStudents,
+      },
       usersByRole,
       topCourses,
       recentActivity,

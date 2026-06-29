@@ -118,11 +118,11 @@ export default function InstructorDashboard() {
     setSelectedQuiz(null);
     setPage('builder');
     const [m, q] = await Promise.all([
-      instrGetModules(course.course_id),
-      instrGetQuizzes(course.course_id),
+      instrGetModules(course.course_id).catch(err => { console.error('getModules failed:', err); return { data: [] }; }),
+      instrGetQuizzes(course.course_id).catch(err => { console.error('getQuizzes failed:', err); return { data: [] }; }),
     ]);
-    setModules(m.data);
-    setQuizzes(q.data);
+    setModules(m.data || []);
+    setQuizzes(q.data || []);
     if (course.course_id) {
       instrGetStudents(course.course_id).then(r => setStudents(r.data)).catch(() => {});
       loadAnalytics(course.course_id, analyticsRange);

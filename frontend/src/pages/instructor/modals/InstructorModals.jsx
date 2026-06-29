@@ -373,9 +373,9 @@ export function StudentDetailModal({ studentDetail, onClose }) {
           </div>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>GPA</div>
+              <div style={{ fontSize: 10, color: token.inkFaint, textTransform: 'uppercase' }}>Avg Score</div>
               <div style={{ fontFamily: fontDisplay, fontSize: 22, color: token.ink, fontWeight: 700 }}>
-                {profile.gpa != null ? Number(profile.gpa).toFixed(2) : '—'}
+                {profile.average_score != null ? `${Number(profile.average_score).toFixed(2)}%` : '—'}
               </div>
             </div>
             <div style={{ textAlign: 'center' }}>
