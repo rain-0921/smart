@@ -1,37 +1,15 @@
-// SMIS Database Seed Script
-// Run:   node seed.js
-// Notes: Uses mysql2/promise and prefers the shared backend/config/db.js pool.
-//        Falls back to inline defaults when the config isn't available so this
-//        script can also be invoked with `node seed.js` from anywhere.
-//
-// Design choices
-// ──────────────
-//  • Single fixed timeline anchor T0 = "2026-06-01 09:00:00". Every created_at
-//    / enrolled_at / attempt is expressed as an offset from T0 so the demo
-//    always looks recent (Feb enrolments → Apr attempts → May activity).
-//  • INSERTs are batched into multi-row VALUES for speed and readability.
-//  • We DELETE rows (in FK-safe order) instead of TRUNCATE so AUTO_INCREMENT
-//    is preserved — keeps hard-coded ids in this script stable across runs
-//    and prevents new app-generated rows from colliding with seed ids.
-//  • `student_profile.average_score` and `is_at_risk` are recomputed at the
-//    end from quiz_attempt rows so the values match what studentController's
-//    submitQuiz would produce in production.
-//  • All demo passwords share the same shape: Admin@123 / Advisor@123 /
-//    Instr@123 / Student@123.
 
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 
 let pool;
 try {
-  // eslint-disable-next-line global-require
   const dbModule = require('./config/db');
-  // The project exports `pool.promise()` directly (a callable) or wraps it
-  // in `{ pool }`. Accept both shapes.
+  
   pool = dbModule && typeof dbModule.query === 'function' ? dbModule : dbModule.pool;
   if (!pool || typeof pool.query !== 'function') throw new Error('invalid pool');
 } catch {
-  // Fallback for running `node seed.js` outside the Express loader.
+  
   pool = mysql.createPool({
     host: '127.0.0.1',
     user: 'root',
@@ -49,8 +27,7 @@ const pad = (x) => String(x).padStart(2, '0');
 const fmt = (d) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
 
-// D(n, h = 9, m = 0) → 'YYYY-MM-DD HH:MM:SS' for (T0 − n days) at h:m.
-// Use this anywhere a `datetime` column needs a literal timestamp.
+
 const D = (n, h = 9, m = 0) => {
   const d = new Date(T0);
   d.setDate(d.getDate() - n);
@@ -58,7 +35,7 @@ const D = (n, h = 9, m = 0) => {
   return fmt(d);
 };
 
-// startAt(...) returns a Date so callers can add/subtract minutes for end_time.
+
 const startAt = (n, h = 9, m = 0) => {
   const d = new Date(T0);
   d.setDate(d.getDate() - n);
@@ -71,14 +48,7 @@ const addMin = (d, m) => {
   return nd;
 };
 
-const PASSWORD_PLAN = {
-  admin:      'Admin@123',
-  advisor:    'Advisor@123',
-  instructor: 'Instr@123',
-  student:    'Student@123',
-};
 
-// ── Bulk insert helper ───────────────────────────────────────────────────────
 async function insertRows(table, rows, columns) {
   if (!rows.length) return;
   const placeholders = rows
@@ -157,28 +127,27 @@ async function seed() {
 // ─── 1. USER ─────────────────────────────────────────────────────────────────
 // Stable IDs let the rest of this script hard-code FKs (e.g. advisor_id=2).
 async function seedUsers() {
-  const hash = (role) => bcrypt.hashSync(PASSWORD_PLAN[role], 10);
   const rows = [
     // admins
-    { user_id: 1, username: 'admin01',      email: 'admin01@smis.edu',      password_hash: hash('admin'),      role: 'admin',      department: 'Administration',   phone_number: '+60111000001', status: 'active', created_at: D(150, 8)  },
+    { user_id: 1, username: 'admin01',      email: 'admin01@smis.edu',      password_hash: bcrypt.hashSync('Admin@123', 10),      role: 'admin',      department: 'Administration',   phone_number: '+60111000001', status: 'active', created_at: D(150, 8)  },
     // advisors
-    { user_id: 2, username: 'advisor01',    email: 'advisor01@smis.edu',    password_hash: hash('advisor'),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000002', status: 'active', created_at: D(145, 8)  },
-    { user_id: 3, username: 'advisor02',    email: 'advisor02@smis.edu',    password_hash: hash('advisor'),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000003', status: 'active', created_at: D(145, 9)  },
+    { user_id: 2, username: 'advisor01',    email: 'advisor01@smis.edu',    password_hash: bcrypt.hashSync('Advisor@123', 10),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000002', status: 'active', created_at: D(145, 8)  },
+    { user_id: 3, username: 'advisor02',    email: 'advisor02@smis.edu',    password_hash: bcrypt.hashSync('Advisor@123', 10),    role: 'advisor',    department: 'Student Affairs',  phone_number: '+60111000003', status: 'active', created_at: D(145, 9)  },
     // instructors
-    { user_id: 4, username: 'instructor01', email: 'instructor01@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Computer Science', phone_number: '+60111000004', status: 'active', created_at: D(140, 9)  },
-    { user_id: 5, username: 'instructor02', email: 'instructor02@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Mathematics',      phone_number: '+60111000005', status: 'active', created_at: D(140, 10) },
-    { user_id: 6, username: 'instructor03', email: 'instructor03@smis.edu', password_hash: hash('instructor'), role: 'instructor', department: 'Data Science',     phone_number: '+60111000006', status: 'active', created_at: D(138, 9)  },
-    // students — mix of programmes and advisors so dashboards have data
-    { user_id: 7,  username: 'student01',  email: 'student01@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000007', status: 'active', created_at: D(120, 10) },
-    { user_id: 8,  username: 'student02',  email: 'student02@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000008', status: 'active', created_at: D(120, 10) },
-    { user_id: 9,  username: 'student03',  email: 'student03@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000009', status: 'active', created_at: D(119, 11) },
-    { user_id: 10, username: 'student04',  email: 'student04@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000010', status: 'active', created_at: D(119, 12) },
-    { user_id: 11, username: 'student05',  email: 'student05@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000011', status: 'active', created_at: D(118, 10) },
-    { user_id: 12, username: 'student06',  email: 'student06@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000012', status: 'active', created_at: D(118, 11) },
-    { user_id: 13, username: 'student07',  email: 'student07@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000013', status: 'active', created_at: D(118, 12) },
-    { user_id: 14, username: 'student08',  email: 'student08@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Mathematics',      phone_number: '+60111000014', status: 'active', created_at: D(117, 10) },
-    { user_id: 15, username: 'student09',  email: 'student09@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Data Science',     phone_number: '+60111000015', status: 'active', created_at: D(117, 11) },
-    { user_id: 16, username: 'student10',  email: 'student10@smis.edu',  password_hash: hash('student'), role: 'student', department: 'Computer Science', phone_number: '+60111000016', status: 'active', created_at: D(116, 10) },
+    { user_id: 4, username: 'instructor01', email: 'instructor01@smis.edu', password_hash: bcrypt.hashSync('Instr@123', 10),  role: 'instructor', department: 'Computer Science', phone_number: '+60111000004', status: 'active', created_at: D(140, 9)  },
+    { user_id: 5, username: 'instructor02', email: 'instructor02@smis.edu', password_hash: bcrypt.hashSync('Instr@123', 10),  role: 'instructor', department: 'Mathematics',      phone_number: '+60111000005', status: 'active', created_at: D(140, 10) },
+    { user_id: 6, username: 'instructor03', email: 'instructor03@smis.edu', password_hash: bcrypt.hashSync('Instr@123', 10),  role: 'instructor', department: 'Data Science',     phone_number: '+60111000006', status: 'active', created_at: D(138, 9)  },
+    // students
+    { user_id: 7,  username: 'student01',  email: 'student01@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Computer Science', phone_number: '+60111000007', status: 'active', created_at: D(120, 10) },
+    { user_id: 8,  username: 'student02',  email: 'student02@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Computer Science', phone_number: '+60111000008', status: 'active', created_at: D(120, 10) },
+    { user_id: 9,  username: 'student03',  email: 'student03@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Mathematics',      phone_number: '+60111000009', status: 'active', created_at: D(119, 11) },
+    { user_id: 10, username: 'student04',  email: 'student04@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Mathematics',      phone_number: '+60111000010', status: 'active', created_at: D(119, 12) },
+    { user_id: 11, username: 'student05',  email: 'student05@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Data Science',     phone_number: '+60111000011', status: 'active', created_at: D(118, 10) },
+    { user_id: 12, username: 'student06',  email: 'student06@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Data Science',     phone_number: '+60111000012', status: 'active', created_at: D(118, 11) },
+    { user_id: 13, username: 'student07',  email: 'student07@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Computer Science', phone_number: '+60111000013', status: 'active', created_at: D(118, 12) },
+    { user_id: 14, username: 'student08',  email: 'student08@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Mathematics',      phone_number: '+60111000014', status: 'active', created_at: D(117, 10) },
+    { user_id: 15, username: 'student09',  email: 'student09@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Data Science',     phone_number: '+60111000015', status: 'active', created_at: D(117, 11) },
+    { user_id: 16, username: 'student10',  email: 'student10@smis.edu',  password_hash: bcrypt.hashSync('Student@123', 10), role: 'student', department: 'Computer Science', phone_number: '+60111000016', status: 'active', created_at: D(116, 10) },
   ];
   await insertRows('user', rows, [
     'user_id','username','email','password_hash','role','department','phone_number','status','created_at',
@@ -315,7 +284,7 @@ async function seedLessons() {
     { lesson_id: 18, module_id: 16, title: 'Primary vs Foreign Keys',                    content_type: 'text',  content_url: null, content_text: 'A primary key uniquely identifies a row in a table. A foreign key is a column (or set of columns) that references the primary key of another table — enforcing referential integrity at the database layer.', sort_order: 1, duration_minutes: 7, status: 'published' },
 
     // Course 7 / Module 17
-    { lesson_id: 19, module_id: 17, title: 'Joins: INNER, LEFT, RIGHT, FULL',             content_type: 'video', content_url: 'https://www.youtube.com/watch?v=2HVMiPPuP9I', content_text: null, sort_order: 1, duration_minutes: 13, status: 'published' },
+    { lesson_id: 19, module_id: 17, title: 'Joins: INNER, LEFT, RIGHT, FULL',             content_type: 'video', content_url: 'https://youtu.be/YfTDBA45PHk?si=WtePbpeNkpdPFSXl', content_text: null, sort_order: 1, duration_minutes: 13, status: 'published' },
   ];
   await insertRows('lesson', rows, ['lesson_id','module_id','title','content_type','content_url','content_text','sort_order','duration_minutes','status']);
   console.log(`   ✓ lesson           (${rows.length} rows)`);
