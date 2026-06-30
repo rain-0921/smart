@@ -210,7 +210,7 @@ exports.getCourseModules = async (req, res) => {
   const { courseId } = req.params;
   try {
     const [enrolled] = await db.execute(
-      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status='active'",
+      "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status IN ('active','completed')",
       [userId, courseId]
     );
     if (enrolled.length === 0) {
@@ -428,8 +428,8 @@ exports.submitQuiz = async (req, res) => {
     const [enrollRows] = await db.execute(
       `SELECT 1 FROM enrollment e
        JOIN quiz q ON e.course_id = q.course_id
-       WHERE e.user_id=? AND q.quiz_id=? AND e.status='active'`,
-      [userId, attemptRows[0].quiz_id]
+       WHERE e.user_id=? AND q.quiz_id=? AND e.status IN ('active','completed')`,
+       [userId, attemptRows[0].quiz_id]
     );
     if (enrollRows.length === 0) return res.status(403).json({ message: 'You are not enrolled in this course' });
 
@@ -668,8 +668,8 @@ exports.submitAssignment = async (req, res) => {
       `SELECT e.enrollment_id
        FROM enrollment e
        JOIN quiz q ON q.course_id = e.course_id
-       WHERE q.quiz_id=? AND e.user_id=? AND e.status='active'`,
-      [quizId, userId]
+       WHERE q.quiz_id=? AND e.user_id=? AND e.status IN ('active','completed')`,
+       [quizId, userId]
     );
     if (enrolled.length === 0) {
       cleanupUpload();
@@ -1000,7 +1000,7 @@ exports.getGradeDetail = async (req, res) => {
        JOIN quiz q ON qa.quiz_id = q.quiz_id
        JOIN course c ON q.course_id = c.course_id
        JOIN enrollment e ON e.course_id = c.course_id AND e.user_id = ?
-       WHERE qa.quiz_attempt_id = ? AND qa.user_id = ? AND e.status = 'active'`,
+       WHERE qa.quiz_attempt_id = ? AND qa.user_id = ? AND e.status IN ('active','completed')`,
       [userId, attemptId, userId]
     );
     if (attemptRows.length === 0) {

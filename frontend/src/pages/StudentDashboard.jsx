@@ -59,7 +59,6 @@ export default function StudentDashboard() {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const fileInputRef = useRef(null);
-  void [profile, fileInputRef];
 
   useEffect(() => {
     const existing = document.getElementById('sils-dashboard-fonts');

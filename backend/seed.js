@@ -402,7 +402,7 @@ async function seedQuestions() {
 
 async function seedQuizAttempts() {
   const attemptAt = (dayOffset, hour, durationMinutes) => {
-    const start = startAt(dayOffset, hour);
+    const start = new Date(startAt(dayOffset, hour));
     return {
       start_time: fmt(start),
       end_time: durationMinutes == null ? null : fmt(addMin(start, durationMinutes)),
@@ -498,7 +498,7 @@ async function seedAnswers() {
     { answer_id: 35, quiz_attempt_id: 11, question_id: 14, user_answer: 'pd.read_csv("data.csv")',   is_correct: 1, score_awarded: 3.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
     { answer_id: 36, quiz_attempt_id: 11, question_id: 15, user_answer: '"age"',                     is_correct: 1, score_awarded: 2.00, feedback: 'Correct!', file_url: null, graded_by_user_id: null },
 
-    { answer_id: 37, quiz_attempt_id: 12, question_id: 8,  user_answer: 'Working on it — submitting tomorrow.', is_correct: null, score_awarded: 0.00, feedback: 'Awaiting instructor review', file_url: null, graded_by_user_id: null },
+    { answer_id: 48, quiz_attempt_id: 12, question_id: 8,  user_answer: 'Draft Java OOP project — v1', is_correct: null, score_awarded: 0.00, feedback: 'Awaiting instructor review', file_url: '/uploads/student07_oop_draft.zip', graded_by_user_id: null },
 
     { answer_id: 38, quiz_attempt_id: 13, question_id: 17, user_answer: 'INNER JOIN',          is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',               file_url: null, graded_by_user_id: null },
     { answer_id: 39, quiz_attempt_id: 13, question_id: 18, user_answer: 'LEFT JOIN',           is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',               file_url: null, graded_by_user_id: null },
@@ -512,8 +512,6 @@ async function seedAnswers() {
     { answer_id: 45, quiz_attempt_id: 15, question_id: 1,  user_answer: 'HyperText Markup Language', is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',         file_url: null, graded_by_user_id: null },
     { answer_id: 46, quiz_attempt_id: 15, question_id: 2,  user_answer: 'h1',                         is_correct: 1, score_awarded: 2.00, feedback: 'Correct!',         file_url: null, graded_by_user_id: null },
     { answer_id: 47, quiz_attempt_id: 15, question_id: 3,  user_answer: 'Sets the document version.', is_correct: 1, score_awarded: 3.00, feedback: 'Well explained.',  file_url: null, graded_by_user_id: 4 },
-
-    { answer_id: 48, quiz_attempt_id: 12, question_id: 8,  user_answer: 'Draft Java OOP project — v1', is_correct: null, score_awarded: 0.00, feedback: 'Awaiting instructor review', file_url: '/uploads/student07_oop_draft.zip', graded_by_user_id: null },
   ];
 
   await insertRows('answer', rows, ['answer_id','quiz_attempt_id','question_id','user_answer','is_correct','score_awarded','feedback','file_url','graded_by_user_id']);

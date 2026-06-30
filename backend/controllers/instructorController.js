@@ -1323,10 +1323,10 @@ exports.gradeSubmission = async (req, res) => {
       }
     }
 
-if (feedback && String(feedback).length > 0) {
+if (feedback !== undefined && feedback !== null && String(feedback).trim().length > 0) {
   await db.execute(
     `UPDATE answer SET feedback=? WHERE quiz_attempt_id=? AND (feedback IS NULL OR feedback='')`,
-    [feedback, attemptId]
+    [String(feedback).trim(), attemptId]
   );
 }
     const [attempt] = await db.execute(
