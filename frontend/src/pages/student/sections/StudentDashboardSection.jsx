@@ -12,7 +12,7 @@ export default function StudentDashboardSection({ user, dashboard, notifications
     : null;
   const avgScoreValue = dashboard.profile?.average_score;
   const avgScore = avgScoreValue != null && !Number.isNaN(Number(avgScoreValue)) ? Number(avgScoreValue).toFixed(2) : '—';
-  const atRisk = dashboard.profile?.is_at_risk;
+  const atRisk = !!dashboard.profile?.is_at_risk;
   const deadlinesCount = dashboard.deadlines?.length || 0;
 
   const deadlineActionFor = (d) => {
@@ -73,9 +73,15 @@ export default function StudentDashboardSection({ user, dashboard, notifications
               {dashboard.enrollments.map((e, i) => {
                 const tone = courseTones[i % courseTones.length];
                 const progress = Math.min(100, Math.max(0, Number(e.completion_percent) || 0));
+                const initial = (() => {
+                  const t = String(e.title || '').trim();
+                  if (!t) return '📘';
+                  const ch = t[0];
+                  return /[A-Za-z]/.test(ch) ? ch.toUpperCase() : '📘';
+                })();
                 return (
                   <div key={e.course_id} style={courseCard} onClick={() => onOpenCourse(e)}>
-                    <div style={{ ...courseThumb, background: tone.thumb }}>{e.title?.[0] || '📘'}</div>
+                    <div style={{ ...courseThumb, background: tone.thumb }}>{initial}</div>
                     <div style={{ ...courseTag, background: tone.tagBg, color: tone.tagColor }}>
                       {e.course_code || `COURSE ${e.course_id}`}
                     </div>

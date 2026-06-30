@@ -598,7 +598,7 @@ export default function StudentDashboard() {
                   </div>
                 ))}
               </div>
-              {profileData?.is_at_risk && (
+              {!!profileData?.is_at_risk && (
                 <div style={{ marginBottom: 16, padding: '8px 12px', borderRadius: token.radiusSm, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)', fontSize: 12, color: token.danger }}>
                   ⚠ You have been flagged as an at-risk student. Contact your advisor for support.
                 </div>
