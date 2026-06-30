@@ -385,7 +385,7 @@ export default function InstructorCourseBuilderSection({
         onExportCsv={onExportStudentsCsv}
         onExportPdf={onExportStudentsPdf}
       />
-      {children /* recharts panels rendered by parent */}
+      {children}
     </div>
   );
 }

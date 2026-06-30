@@ -1,12 +1,3 @@
-/**
- * Migration: add `status` column to the `module` table.
- *
- * The student controller's getCourseModules filters on m.status='published',
- * so this column must exist to avoid "Unknown column 'm.status'" errors.
- *
- * Run with: node addModuleStatus.js
- */
-
 require('dotenv').config();
 const mysql = require('mysql2/promise');
 
@@ -21,7 +12,6 @@ async function migrate() {
   });
 
   try {
-    // 1. Check if column already exists
     const [cols] = await pool.query(`
       SELECT COLUMN_NAME
       FROM INFORMATION_SCHEMA.COLUMNS
@@ -33,7 +23,6 @@ async function migrate() {
       return;
     }
 
-    // 2. Add the column with DEFAULT 'published' so existing modules are visible
     await pool.query(`
       ALTER TABLE module
       ADD COLUMN status ENUM('draft','published','archived') NOT NULL DEFAULT 'published'
@@ -41,8 +30,6 @@ async function migrate() {
     `);
     console.log('Added `status` column to `module` table (default: published).');
 
-    // 3. Also fix module_progress — it may be missing a composite primary key,
-    //    which can cause duplicate-entry errors on INSERT.
     const [pk] = await pool.query(`
       SELECT CONSTRAINT_NAME
       FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS

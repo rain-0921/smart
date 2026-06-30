@@ -36,7 +36,6 @@ export default function InstructorDashboard() {
   const [page, setPage] = useState('dashboard');
   const { alert, showAlert } = useDashboardAlerts(4000);
 
-  // Data
   const [dashboard, setDashboard] = useState(null);
   const [courses, setCourses] = useState([]);
   const [modules, setModules] = useState([]);
@@ -50,12 +49,10 @@ export default function InstructorDashboard() {
   const [analyticsRange, setAnalyticsRange] = useState({ from: '', to: '' });
   const [notifications, setNotifications] = useState([]);
 
-  // Selected context
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [selectedQuiz, setSelectedQuiz] = useState(null);
   const [selectedModule, setSelectedModule] = useState(null);
 
-  // Modals
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [showModuleModal, setShowModuleModal] = useState(false);
   const [showLessonModal, setShowLessonModal] = useState(false);
@@ -73,13 +70,11 @@ export default function InstructorDashboard() {
   const [studentDetail, setStudentDetail] = useState(null);
   const [studentDetailLoading, setStudentDetailLoading] = useState(false);
 
-  // Forms
   const blankCourse   = { title: '', description: '', status: 'draft' };
   const blankModule  = { title: '', description: '' };
   const blankLesson  = { title: '', content_type: 'text', content_url: '', content_text: '', duration_minutes: '', file: null };
   const toDatetimeLocal = (iso) => {
     if (!iso) return '';
-    // Parse as UTC, then format as local datetime-local
     const d = new Date(iso);
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -88,7 +83,6 @@ export default function InstructorDashboard() {
     const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     return d.toISOString().slice(0, 16);
   };
-  // Convert datetime-local string to ISO 8601 (UTC) before sending to backend
   const toIsoString = (localStr) => {
     if (!localStr) return '';
     return new Date(localStr).toISOString();
@@ -110,7 +104,6 @@ export default function InstructorDashboard() {
   const [feedbackForm, setFeedbackForm]= useState(blankFeedback);
   const [photoFile, setPhotoFile]     = useState(null);
 
-  // Fetch on page change
   useEffect(() => {
     if (page === 'dashboard') instrGetDashboard().then(r => setDashboard(r.data)).catch(() => {});
     if (page === 'courses') instrGetCourses().then(r => setCourses(r.data)).catch(() => {});
@@ -118,7 +111,6 @@ export default function InstructorDashboard() {
     if (page === 'notifications') instrGetNotifications().then(r => setNotifications(r.data)).catch(() => {});
   }, [page]);
 
-  // Open course builder
   const openCourse = async (course) => {
     setSelectedCourse(course);
     setSelectedQuiz(null);
@@ -153,7 +145,6 @@ export default function InstructorDashboard() {
     setFeedbackWarning(fbRes.data.alreadyAttempted);
   };
 
-  // COURSE
   const saveCourse = async () => {
     try {
       if (editingCourse) { await instrUpdateCourse(editingCourse.course_id, courseForm); showAlert('Course updated.'); }
@@ -168,7 +159,6 @@ export default function InstructorDashboard() {
     catch { showAlert('Failed', 'error'); }
   };
 
-  // MODULE
   const saveModule = async () => {
     try {
       if (editingModule) {
@@ -192,7 +182,6 @@ export default function InstructorDashboard() {
     } catch { showAlert('Failed', 'error'); }
   };
 
-  // LESSON
   const saveLesson = async () => {
     try {
       if (editingLesson) {
@@ -228,7 +217,6 @@ export default function InstructorDashboard() {
     catch { showAlert('Failed', 'error'); }
   };
 
-  // QUIZ
   const saveQuiz = async () => {
     try {
       const payload = {
@@ -259,7 +247,6 @@ export default function InstructorDashboard() {
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
 
-  // QUESTION
   const saveQuestion = async () => {
     try {
       const payload = { ...qForm };
@@ -305,7 +292,6 @@ export default function InstructorDashboard() {
     } catch { showAlert('Failed', 'error'); }
   };
 
-  // STUDENT DETAIL + EXPORT
   const openStudentDetail = async (studentId) => {
     setStudentDetail(null);
     setStudentDetailLoading(true);
@@ -349,7 +335,6 @@ export default function InstructorDashboard() {
     } catch (err) { showAlert('Failed to export PDF: ' + (err.response?.data?.message || err.message), 'error'); }
   };
 
-  // FEEDBACK BAND
   const openAddFeedback = () => {
     setEditingFeedback(null);
     setFeedbackForm({ min_score: '', max_score: '', feedback_message: '' });
@@ -379,7 +364,6 @@ export default function InstructorDashboard() {
     } catch { showAlert('Failed', 'error'); }
   };
 
-  // GRADING
   const openGrade = (item) => {
     setGradingItem(item);
     setGradeForm({ score: '', feedback: '' });
@@ -394,7 +378,6 @@ export default function InstructorDashboard() {
     } catch (e) { showAlert(e.response?.data?.message || 'Failed', 'error'); }
   };
 
-  // PROFILE
   const openProfile = async () => {
     const res = await instrGetProfile();
     setProfileForm({
@@ -457,7 +440,6 @@ export default function InstructorDashboard() {
     },
   ];
 
-  // ───── Charts (kept in parent because recharts lives here) ─────
   const renderCharts = () => {
     if (!analytics) return null;
     return (

@@ -12,15 +12,13 @@ export default function StudentDashboardSection({ user, dashboard, notifications
     : null;
   const avgScoreValue = dashboard.profile?.average_score;
   const avgScore = avgScoreValue != null && !Number.isNaN(Number(avgScoreValue)) ? Number(avgScoreValue).toFixed(2) : '—';
-  const atRisk = dashboard.profile?.is_at_risk;
+  const atRisk = !!dashboard.profile?.is_at_risk;
   const deadlinesCount = dashboard.deadlines?.length || 0;
 
-  // Decide what label / click handler to use for each upcoming deadline row.
   const deadlineActionFor = (d) => {
     const isAssignment = d.submission_type && d.submission_type !== 'online_quiz';
     const hasAttempt = !!d.latest_attempt_id;
     if (hasAttempt && (d.latest_attempt_status === 'submitted' || d.latest_attempt_status === 'graded')) {
-      // Allow resubmit on file assignments until the deadline
       if (isAssignment && d.latest_attempt_status === 'submitted' && !d.deadline_passed) {
         return { label: 'Resubmit', tone: 'due', onClick: () => onOpenDeadline(d) };
       }
@@ -75,9 +73,15 @@ export default function StudentDashboardSection({ user, dashboard, notifications
               {dashboard.enrollments.map((e, i) => {
                 const tone = courseTones[i % courseTones.length];
                 const progress = Math.min(100, Math.max(0, Number(e.completion_percent) || 0));
+                const initial = (() => {
+                  const t = String(e.title || '').trim();
+                  if (!t) return '📘';
+                  const ch = t[0];
+                  return /[A-Za-z]/.test(ch) ? ch.toUpperCase() : '📘';
+                })();
                 return (
                   <div key={e.course_id} style={courseCard} onClick={() => onOpenCourse(e)}>
-                    <div style={{ ...courseThumb, background: tone.thumb }}>{e.title?.[0] || '📘'}</div>
+                    <div style={{ ...courseThumb, background: tone.thumb }}>{initial}</div>
                     <div style={{ ...courseTag, background: tone.tagBg, color: tone.tagColor }}>
                       {e.course_code || `COURSE ${e.course_id}`}
                     </div>

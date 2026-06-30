@@ -2,9 +2,6 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Per SDS spec: lesson materials may be PDF, Word, PowerPoint, video, or image.
-// Size cap matches the student assignment submission limit (50 MB) so an
-// instructor can publish the same artifacts they expect students to submit.
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'lessons');
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -26,12 +23,11 @@ const ALLOWED_MIME = [
 
 const ALLOWED_EXT = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.mp4', '.webm', '.mov', '.jpg', '.jpeg', '.png', '.gif'];
 
-const MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+const MAX_BYTES = 50 * 1024 * 1024;
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
-    // Sanitize the original extension, prefix with timestamp to avoid collisions.
     const ext = (path.extname(file.originalname) || '').toLowerCase();
     const safeExt = ALLOWED_EXT.includes(ext) ? ext : '';
     cb(null, `lesson_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${safeExt}`);
@@ -51,15 +47,11 @@ const materialUpload = multer({
   }
 });
 
-// Maps a multer-uploaded file's mimetype to the lesson.content_type enum value
-// used by the rest of the system (and the student viewer).
 function inferContentType(mimetype) {
   if (!mimetype) return 'other';
   if (mimetype === 'application/pdf') return 'pdf';
   if (mimetype.startsWith('video/')) return 'video';
   if (mimetype.startsWith('image/')) return 'other';
-  // DOC / DOCX / PPT / PPTX all collapse to "other" since the lesson content_type
-  // enum is {video, text, pdf, other} per the SDS data dictionary.
   return 'other';
 }
 

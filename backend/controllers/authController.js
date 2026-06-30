@@ -1,8 +1,7 @@
 const db = require('../config/db');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// REGISTER
 exports.register = async (req, res) => {
   const { username, email, password, role, department, phone_number } = req.body;
 
@@ -11,7 +10,6 @@ exports.register = async (req, res) => {
   }
 
   try {
-    // Check if email already exists
     const [existing] = await db.execute(
       'SELECT user_id FROM user WHERE email = ?', [email]
     );
@@ -19,10 +17,8 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Hash password
     const password_hash = await bcrypt.hash(password, 10);
 
-    // Insert user
     const [result] = await db.execute(
       `INSERT INTO user (username, email, password_hash, role, department, phone_number)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -31,7 +27,6 @@ exports.register = async (req, res) => {
 
     const newUserId = result.insertId;
 
-    // Auto-create profile based on role
     if (role === 'student') {
       await db.execute(
         'INSERT INTO student_profile (user_id) VALUES (?)', [newUserId]
@@ -49,7 +44,6 @@ exports.register = async (req, res) => {
   }
 };
 
-// LOGIN
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
@@ -83,7 +77,6 @@ exports.login = async (req, res) => {
       { expiresIn: '8h' }
     );
 
-    // Log the login activity
     await db.execute(
       `INSERT INTO activity_log (user_id, activity_type, description)
        VALUES (?, 'login', ?)`,
@@ -106,7 +99,6 @@ exports.login = async (req, res) => {
   }
 };
 
-// GET CURRENT USER (me)
 exports.getMe = async (req, res) => {
   try {
     const [rows] = await db.execute(

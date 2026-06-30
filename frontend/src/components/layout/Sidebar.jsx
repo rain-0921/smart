@@ -1,19 +1,6 @@
 import { token, fontDisplay, fontMono, styles } from '../../theme';
 import { Icon } from '../shared';
 
-/**
- * Sidebar — receives role-specific nav items and renders them.
- *
- * Props:
- *   - user        {object}                current user (for the avatar footer)
- *   - portalName  {string}                text under the logo (e.g. "Student Portal")
- *   - navGroups   {Array<{label,items[]}> each group: { label, items: [{key,label,icon, badge?}] } }
- *   - activeKey   {string}                currently active nav key
- *   - onNavigate  {fn(key)}               click handler
- *   - onLogout    {fn}
- *   - onProfile   {fn}
- *   - profilePhoto {string|null}          url of the user's photo
- */
 export default function Sidebar({
   user,
   portalName = 'Portal',

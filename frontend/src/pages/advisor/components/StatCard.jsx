@@ -1,7 +1,6 @@
 import { token, fontMono } from '../../../theme';
 import { Card, Icon } from '../../../components/shared';
 
-/** A simple "label on top, big mono number below" stat tile used by Advisor dashboard. */
 export default function StatCard({ label, value, accent = token.ink, icon, style }) {
   return (
     <Card padding="16px 20px" style={{ minWidth: 150, flex: '1 1 150px', borderLeft: `4px solid ${accent}`, ...style }}>

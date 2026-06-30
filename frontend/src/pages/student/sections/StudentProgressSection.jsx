@@ -10,14 +10,13 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
 
   return (
     <div>
-      {/* Avg score & at-risk banner */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <div style={{ ...statCard, flex: '1 1 180px', borderTop: `2px solid ${progressData.is_at_risk ? theme.accent5 : theme.accent3}` }}>
           <div style={{ fontSize: 11, color: theme.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Avg Score</div>
           <div style={{ fontFamily: fontDisplay, fontSize: 36, color: progressData.average_score != null ? theme.text : theme.textDim, lineHeight: 1 }}>
             {progressData.average_score != null ? `${Number(progressData.average_score).toFixed(2)}%` : '—'}
           </div>
-      {progressData.is_at_risk && (
+      {!!progressData.is_at_risk && (
         <div style={{ marginBottom: 20, padding: '12px 16px', borderRadius: 8, background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)', fontSize: 13, color: theme.accent5, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>⚠️</span>
           <span><strong>At-Risk Alert:</strong> Your academic advisor has been notified of your average quiz score (below 50%). Please reach out for support.</span>
@@ -32,7 +31,6 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
         </div>
       </div>
 
-      {/* Recommendations */}
       {progressData.recommendations?.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={sectionTitle}>Recommended Next Steps</div>
@@ -60,7 +58,6 @@ export default function StudentProgressSection({ progressData, onGotoLessons }) 
         </div>
       )}
 
-      {/* Per-course breakdown */}
       <div style={sectionTitle}>Course Breakdown</div>
       {progressData.courses.length === 0 ? (
         <div style={emptyState}>No enrolled courses yet.</div>

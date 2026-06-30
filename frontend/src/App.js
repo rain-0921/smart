@@ -6,7 +6,6 @@ import InstructorDashboard from './pages/InstructorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AdvisorDashboard from './pages/AdvisorDashboard';
 
-// Redirects to correct dashboard based on role
 function RoleRoute() {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" />;
@@ -20,7 +19,6 @@ function RoleRoute() {
   }
 }
 
-// Protects a route — redirects to login if not logged in
 function ProtectedRoute({ children, allowedRoles }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" />;

@@ -5,7 +5,6 @@ const API = axios.create({ baseURL: `${BASE_URL}/api` });
 
 export { BASE_URL };
 
-/** Prepends BASE_URL if the path is a relative upload path (starts with /uploads/). */
 export const photoUrl = (path) => {
   if (!path) return null;
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -18,37 +17,31 @@ API.interceptors.request.use((req) => {
   return req;
 });
 
-// Auth
 export const loginUser    = (data) => API.post('/auth/login', data);
 export const registerUser = (data) => API.post('/auth/register', data);
 export const getMe        = ()     => API.get('/auth/me');
 
-// Admin - Users
 export const adminGetUsers       = ()       => API.get('/admin/users');
 export const adminAddUser        = (data)   => API.post('/admin/users', data);
 export const adminEditUser       = (id, data) => API.put(`/admin/users/${id}`, data);
 export const adminDeactivateUser = (id)     => API.patch(`/admin/users/${id}/deactivate`);
 export const adminGetDepartments = ()       => API.get('/admin/departments');
 
-// Admin - Courses
 export const adminGetCourses     = ()       => API.get('/admin/courses');
 export const adminAddCourse      = (data)   => API.post('/admin/courses', data);
 export const adminEditCourse     = (id, data) => API.put(`/admin/courses/${id}`, data);
 export const adminArchiveCourse  = (id)     => API.patch(`/admin/courses/${id}/archive`);
 
-// Admin - Enrollments
 export const adminGetEnrollments = ()       => API.get('/admin/enrollments');
 export const adminAddEnrollment  = (data)   => API.post('/admin/enrollments', data);
 export const adminEditEnrollment = (id, data) => API.put(`/admin/enrollments/${id}`, data);
 export const adminDropEnrollment = (id)     => API.patch(`/admin/enrollments/${id}/drop`);
 
-// Admin - Advisor Assignment
 export const adminGetStudentsWithAdvisor = () => API.get('/admin/students');
 export const adminGetAdvisors            = () => API.get('/admin/advisors');
 export const adminAssignAdvisor          = (studentId, advisorId) =>
   API.patch(`/admin/students/${studentId}/advisor`, { advisor_id: advisorId });
 
-// Admin - Reports & Logs
 export const adminGetReports     = (params) => API.get('/admin/reports', { params });
 export const adminExportReports  = (params) => API.get('/admin/reports/export', { params, responseType: 'blob' });
 export const adminGetReportTypes = ()       => API.get('/admin/reports/types');
@@ -58,13 +51,11 @@ export const adminGetLogFilters  = ()       => API.get('/admin/activity-logs/fil
 export const adminGetLogUsers    = ()       => API.get('/admin/activity-logs/users');
 export const adminExportLogs     = (params) => API.get('/admin/activity-logs/export', { params });
 
-// Admin - Notifications
 export const adminGetNotifications    = ()       => API.get('/admin/notifications');
 export const adminCreateNotification  = (data)  => API.post('/admin/notifications', data);
 export const adminEditNotification    = (id, data) => API.put(`/admin/notifications/${id}`, data);
 export const adminDeleteNotification  = (id)    => API.delete(`/admin/notifications/${id}`);
 
-// Student
 export const studentGetDashboard    = ()           => API.get('/student/dashboard');
 export const studentGetProfile      = ()           => API.get('/student/profile');
 export const studentUpdateProfile   = (data)       => API.put('/student/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -86,7 +77,6 @@ export const studentMarkRead        = (id)         => API.patch(`/student/notifi
 export const studentGetProgress    = ()           => API.get('/student/progress');
 export const studentGetGradeDetail = (attemptId)  => API.get(`/student/attempts/${attemptId}/detail`);
 export const studentLogActivity    = (data)       => API.post('/student/log-activity', data);
-// Instructor
 export const instrGetDashboard      = ()             => API.get('/instructor/dashboard');
 export const instrGetProfile        = ()             => API.get('/instructor/profile');
 export const instrUpdateProfile     = (data)         => API.put('/instructor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -124,7 +114,6 @@ export const instrGetAnalytics      = (courseId, params = {}) => API.get(`/instr
 export const instrGetNotifications  = ()             => API.get('/instructor/notifications');
 export const instrMarkRead          = (id)           => API.patch(`/instructor/notifications/${id}/read`);
 
-// Advisor
 export const advisorGetDashboard     = ()           => API.get('/advisor/dashboard');
 export const advisorGetProfile       = ()           => API.get('/advisor/profile');
 export const advisorUpdateProfile    = (data)       => API.put('/advisor/profile', data, { headers: { 'Content-Type': 'multipart/form-data' } });
