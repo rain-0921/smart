@@ -154,7 +154,7 @@ exports.getMyCourses = async (req, res) => {
        FROM course c
        LEFT JOIN enrollment e ON e.course_id = c.course_id AND e.status='active'
        WHERE c.instructor_id=?
-       GROUP BY c.course_id
+       GROUP BY c.course_id, c.title, c.description, c.status, c.created_at
        ORDER BY c.created_at DESC`, [userId]
     );
     res.json(courses);
@@ -326,7 +326,7 @@ exports.deleteModule = async (req, res) => {
       `SELECT m.module_id FROM module m JOIN course c ON m.course_id=c.course_id
        WHERE m.module_id=? AND c.instructor_id=?`, [moduleId, userId]
     );
-    if (!row) return res.status(403).json({ message: 'Module not found or not owned by you' });
+    if (!row) return res.status(404).json({ message: 'Module not found' });
     await db.execute(`DELETE FROM module WHERE module_id=?`, [moduleId]);
     res.json({ message: 'Module deleted' });
   } catch (error) {
@@ -361,6 +361,8 @@ exports.createLesson = async (req, res) => {
       return res.status(400).json({ message: 'content_type is required when no file is uploaded' });
     if (!VALID_LESSON_CONTENT_TYPES.includes(resolvedContentType))
       return res.status(400).json({ message: `Invalid content_type. Must be one of: ${VALID_LESSON_CONTENT_TYPES.join(', ')}` });
+    if (!resolvedContentUrl && !resolvedContentText)
+      return res.status(400).json({ message: 'Lesson must have either a content URL, content text, or an uploaded file' });
 
     const [[{ maxOrder }]] = await db.execute(
       `SELECT COALESCE(MAX(sort_order),0) AS maxOrder FROM lesson WHERE module_id=?`, [moduleId]
@@ -427,7 +429,7 @@ exports.deleteLesson = async (req, res) => {
        JOIN course c ON m.course_id=c.course_id
        WHERE l.lesson_id=? AND c.instructor_id=?`, [lessonId, userId]
     );
-    if (!row) return res.status(403).json({ message: 'Lesson not found or not owned by you' });
+    if (!row) return res.status(404).json({ message: 'Lesson not found' });
     await db.execute(`DELETE FROM lesson WHERE lesson_id=?`, [lessonId]);
     res.json({ message: 'Lesson deleted' });
   } catch (error) {
@@ -1266,7 +1268,7 @@ exports.gradeSubmission = async (req, res) => {
        WHERE qa.quiz_attempt_id=? AND c.instructor_id=?`,
       [attemptId, userId]
     );
-    if (!row) return res.status(403).json({ message: 'Submission not found or not yours' });
+    if (!row) return res.status(404).json({ message: 'Submission not found' });
     if (row.status === 'graded') {
       return res.status(409).json({ message: 'Submission has already been graded' });
     }

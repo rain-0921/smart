@@ -167,6 +167,15 @@ exports.enrollCourse = async (req, res) => {
   const userId = req.user.user_id;
   const { course_id } = req.body;
   try {
+    const [course] = await db.execute(
+      `SELECT status FROM course WHERE course_id=?`, [course_id]
+    );
+    if (course.length === 0) {
+      return res.status(404).json({ message: 'Course not found' });
+    }
+    if (course[0].status !== 'published') {
+      return res.status(400).json({ message: 'Cannot enroll in a course that is not published' });
+    }
     const [existing] = await db.execute(
       "SELECT enrollment_id FROM enrollment WHERE user_id=? AND course_id=? AND status IN ('active','completed')",
       [userId, course_id]
@@ -383,6 +392,16 @@ exports.startQuiz = async (req, res) => {
       return res.status(400).json({ message: 'Maximum attempts reached' });
     }
 
+    const [enrollRows] = await db.execute(
+      `SELECT 1 FROM enrollment e
+       JOIN quiz q ON e.course_id = q.course_id
+       WHERE e.user_id=? AND q.quiz_id=? AND e.status IN ('active','completed')`,
+      [userId, quizId]
+    );
+    if (enrollRows.length === 0) {
+      return res.status(403).json({ message: 'You are not enrolled in this course' });
+    }
+
     let query = 'SELECT * FROM question WHERE quiz_id=?';
     if (quiz[0].randomize_questions) query += ' ORDER BY RAND()';
     if (quiz[0].num_questions_per_attempt) query += ` LIMIT ${quiz[0].num_questions_per_attempt}`;
@@ -447,6 +466,7 @@ exports.submitQuiz = async (req, res) => {
 
       let isCorrect = null;
       let scoreAwarded = 0;
+      let autoFeedback = null;
 
       if (question.question_type === 'short_answer') {
         pendingReview += 1;
@@ -457,19 +477,28 @@ exports.submitQuiz = async (req, res) => {
                     question.correct_answer?.trim().toLowerCase();
         scoreAwarded = isCorrect ? question.points : 0;
         if (isCorrect) totalScore += question.points;
+        autoFeedback = isCorrect ? 'Correct!' : (question.improvement_tip || 'Review this topic');
       }
 
-      const autoFeedback = isCorrect === true
-        ? 'Correct!'
-        : (isCorrect === false ? (question.improvement_tip || 'Review this topic') : null);
+      const feedbackVal = isCorrect === null ? 'Awaiting instructor review' : autoFeedback;
 
-      await db.execute(
-        `INSERT INTO answer (quiz_attempt_id, question_id, user_answer, is_correct, score_awarded, feedback)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [attemptId, ans.question_id, ans.user_answer || '',
-         isCorrect, scoreAwarded,
-         isCorrect === null ? 'Awaiting instructor review' : autoFeedback]
+      const [[existingAnswer]] = await db.execute(
+        `SELECT answer_id FROM answer WHERE quiz_attempt_id=? AND question_id=?`,
+        [attemptId, ans.question_id]
       );
+      if (existingAnswer) {
+        await db.execute(
+          `UPDATE answer SET user_answer=?, is_correct=?, score_awarded=?, feedback=?
+           WHERE answer_id=?`,
+          [ans.user_answer || '', isCorrect, scoreAwarded, feedbackVal, existingAnswer.answer_id]
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO answer (quiz_attempt_id, question_id, user_answer, is_correct, score_awarded, feedback)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [attemptId, ans.question_id, ans.user_answer || '', isCorrect, scoreAwarded, feedbackVal]
+        );
+      }
 
       results.push({
         question_text: question.question_text,
@@ -478,54 +507,57 @@ exports.submitQuiz = async (req, res) => {
         correct_answer: question.question_type !== 'short_answer' ? question.correct_answer : null,
         is_correct: isCorrect,
         score_awarded: scoreAwarded,
-        feedback: isCorrect === null ? 'Awaiting instructor review' : autoFeedback
+        feedback: feedbackVal
       });
     }
 
     const percentage = totalPoints > 0 ? (totalScore / totalPoints) * 100 : 0;
+    const finalStatus = pendingReview > 0 ? 'submitted' : 'graded';
 
     await db.execute(
-      `UPDATE quiz_attempt SET status='graded', score=?, end_time=NOW()
+      `UPDATE quiz_attempt SET status=?, score=?, end_time=NOW()
        WHERE quiz_attempt_id=?`,
-      [percentage, attemptId]
+      [finalStatus, percentage, attemptId]
     );
 
-    const [[{ avgScore }]] = await db.execute(
-      `SELECT AVG(score) AS avgScore FROM quiz_attempt
-       WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
-      [userId]
-    );
-    const avgScoreRounded = avgScore !== null ? Math.round(avgScore * 100) / 100 : 0;
-    await db.execute(
-      `UPDATE student_profile SET average_score=? WHERE user_id=?`,
-      [avgScoreRounded, userId]
-    );
-    const [[profile]] = await db.execute(
-      `SELECT sp.advisor_id, u.username AS student_name
-       FROM student_profile sp JOIN user u ON sp.user_id=u.user_id
-       WHERE sp.user_id=?`,
-      [userId]
-    );
-    if (profile && profile.advisor_id) {
-      const [[{ wasAtRisk }]] = await db.execute(
-        `SELECT is_at_risk AS wasAtRisk FROM student_profile WHERE user_id=?`,
+    if (pendingReview === 0) {
+      const [[{ avgScore }]] = await db.execute(
+        `SELECT AVG(score) AS avgScore FROM quiz_attempt
+         WHERE user_id=? AND status='graded' AND score IS NOT NULL`,
         [userId]
       );
-      const nowAtRisk = avgScoreRounded < 50 ? 1 : 0;
+      const avgScoreRounded = avgScore !== null ? Math.round(avgScore * 100) / 100 : 0;
+      await db.execute(
+        `UPDATE student_profile SET average_score=? WHERE user_id=?`,
+        [avgScoreRounded, userId]
+      );
+      const [[profile]] = await db.execute(
+        `SELECT sp.advisor_id, u.username AS student_name
+         FROM student_profile sp JOIN user u ON sp.user_id=u.user_id
+         WHERE sp.user_id=?`,
+        [userId]
+      );
+      if (profile && profile.advisor_id) {
+        const [[{ wasAtRisk }]] = await db.execute(
+          `SELECT is_at_risk AS wasAtRisk FROM student_profile WHERE user_id=?`,
+          [userId]
+        );
+        const nowAtRisk = avgScoreRounded < 50 ? 1 : 0;
         if (nowAtRisk === 1 && wasAtRisk !== 1) {
+          await db.execute(
+            `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [profile.advisor_id,
+             `Low Score Alert: ${profile.student_name}`,
+             `Your student ${profile.student_name}'s average quiz score has dropped to ${avgScoreRounded.toFixed(2)} (below 50%). Please review their academic progress.`,
+             'alert', 'student', userId]
+          );
+        }
         await db.execute(
-          `INSERT INTO notification (user_id, title, message, type, related_item_type, related_item_id)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [profile.advisor_id,
-           `Low Score Alert: ${profile.student_name}`,
-           `Your student ${profile.student_name}'s average quiz score has dropped to ${avgScoreRounded.toFixed(2)} (below 50%). Please review their academic progress.`,
-           'alert', 'student', userId]
+          `UPDATE student_profile SET is_at_risk=? WHERE user_id=?`,
+          [nowAtRisk, userId]
         );
       }
-      await db.execute(
-        `UPDATE student_profile SET is_at_risk=? WHERE user_id=?`,
-        [nowAtRisk, userId]
-      );
     }
 
     const [bandRows] = await db.execute(
@@ -1009,7 +1041,7 @@ exports.getGradeDetail = async (req, res) => {
     const attempt = attemptRows[0];
 
     if (attempt.status === 'in_progress') {
-      return res.status(400).json({ message: 'Quiz is still in progress' });
+      return res.status(409).json({ message: 'Quiz is still in progress' });
     }
 
     if (attempt.status === 'submitted') {
